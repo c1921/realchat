@@ -14,7 +14,7 @@
 ### 提交信息格式
 
 ```
-<type>[(scope)]: <summary>
+<type>: <summary>
 
 [body]
 
@@ -22,7 +22,6 @@
 ```
 
 - type 建议：feat、fix、docs、refactor、test、chore、build（其他场景按需）
-- scope 使用模块/目录（如 app、data、scripts），无明确范围可省略
 - summary 使用中文、动词开头，长度 ≤ 50 字，不加句号
 - 需要时在正文补充动机、影响或迁移方式
 
@@ -52,6 +51,5 @@
 
 - `git status` 确认改动范围
 - `git add <files>` 仅添加相关文件
-- `npm run lint` 通过后再提交
 - `git commit -m "..."` 完成提交
 - `git push` 后发起 PR（如需）
