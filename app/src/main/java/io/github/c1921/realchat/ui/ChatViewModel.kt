@@ -21,6 +21,7 @@ import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.UserPersona
@@ -40,6 +41,10 @@ enum class AppScreen {
     Settings
 }
 
+sealed interface SecondaryScreen {
+    data class ChatDetail(val conversationId: Long) : SecondaryScreen
+}
+
 enum class CharacterEditorField {
     Name,
     Description,
@@ -57,7 +62,7 @@ enum class CharacterEditorField {
 }
 
 data class ConversationUiState(
-    val conversations: List<Conversation> = emptyList(),
+    val conversationItems: List<ConversationListItem> = emptyList(),
     val selectedConversationId: Long? = null,
     val messages: List<ChatMessage> = emptyList(),
     val draft: String = "",
@@ -72,7 +77,8 @@ data class ConversationUiState(
     val pendingRenameTitle: String = ""
 ) {
     fun selectedConversation(): Conversation? {
-        return conversations.firstOrNull { it.id == selectedConversationId }
+        return conversationItems.firstOrNull { it.conversation.id == selectedConversationId }
+            ?.conversation
     }
 }
 
@@ -116,6 +122,7 @@ data class SettingsUiState(
 
 data class MainUiState(
     val currentScreen: AppScreen = AppScreen.Conversations,
+    val secondaryScreen: SecondaryScreen? = null,
     val conversation: ConversationUiState = ConversationUiState(),
     val characters: CharacterCardsUiState = CharacterCardsUiState(),
     val settings: SettingsUiState = SettingsUiState()
@@ -149,7 +156,26 @@ class ChatViewModel(
 
     fun openScreen(screen: AppScreen) {
         _uiState.update { current ->
-            current.copy(currentScreen = screen)
+            current.copy(
+                currentScreen = screen,
+                secondaryScreen = null
+            )
+        }
+    }
+
+    fun openConversationDetail(conversationId: Long) {
+        selectConversationInternal(conversationId, persistSelection = true)
+        _uiState.update { current ->
+            current.copy(
+                currentScreen = AppScreen.Conversations,
+                secondaryScreen = SecondaryScreen.ChatDetail(conversationId)
+            )
+        }
+    }
+
+    fun closeSecondaryScreen() {
+        _uiState.update { current ->
+            current.copy(secondaryScreen = null)
         }
     }
 
@@ -342,7 +368,7 @@ class ChatViewModel(
 
     fun deleteSelectedConversation() {
         val conversationId = uiState.value.conversation.selectedConversationId ?: return
-        val shouldRecreate = uiState.value.conversation.conversations.size <= 1
+        val shouldRecreate = uiState.value.conversation.conversationItems.size <= 1
         viewModelScope.launch {
             runCatching {
                 conversationRepository.deleteConversation(conversationId)
@@ -489,6 +515,7 @@ class ChatViewModel(
         _uiState.update { current ->
             current.copy(
                 currentScreen = AppScreen.Characters,
+                secondaryScreen = null,
                 characters = current.characters.copy(
                     isEditing = true,
                     editor = CharacterCardEditorState(),
@@ -504,6 +531,7 @@ class ChatViewModel(
         _uiState.update { current ->
             current.copy(
                 currentScreen = AppScreen.Characters,
+                secondaryScreen = null,
                 characters = current.characters.copy(
                     isEditing = true,
                     editor = card.toEditorState(),
@@ -638,6 +666,7 @@ class ChatViewModel(
                 _uiState.update { current ->
                     current.copy(
                         currentScreen = AppScreen.Characters,
+                        secondaryScreen = null,
                         characters = current.characters.copy(
                             errorText = null,
                             statusText = "角色卡导入成功。"
@@ -648,6 +677,7 @@ class ChatViewModel(
                 _uiState.update { current ->
                     current.copy(
                         currentScreen = AppScreen.Characters,
+                        secondaryScreen = null,
                         characters = current.characters.copy(
                             errorText = throwable.message ?: "角色卡导入失败。"
                         )
@@ -661,6 +691,7 @@ class ChatViewModel(
         _uiState.update { current ->
             current.copy(
                 currentScreen = AppScreen.Characters,
+                secondaryScreen = null,
                 characters = current.characters.copy(
                     errorText = errorText
                 )
@@ -686,6 +717,7 @@ class ChatViewModel(
                 _uiState.update { current ->
                     current.copy(
                         currentScreen = AppScreen.Characters,
+                        secondaryScreen = null,
                         characters = current.characters.copy(
                             pendingExport = payload,
                             errorText = null
@@ -888,23 +920,43 @@ class ChatViewModel(
 
     private fun observeConversations() {
         viewModelScope.launch {
-            conversationRepository.observeConversations().collect { conversations ->
+            conversationRepository.observeConversationListItems().collect { conversationItems ->
                 val currentSelectedId = uiState.value.conversation.selectedConversationId
                 val preferredId = when {
-                    currentSelectedId != null && conversations.any { it.id == currentSelectedId } ->
+                    currentSelectedId != null &&
+                        conversationItems.any { it.conversation.id == currentSelectedId } ->
                         currentSelectedId
 
                     activePreferences.selectedConversationId != null &&
-                        conversations.any { it.id == activePreferences.selectedConversationId } ->
+                        conversationItems.any {
+                            it.conversation.id == activePreferences.selectedConversationId
+                        } ->
                         activePreferences.selectedConversationId
 
-                    else -> conversations.firstOrNull()?.id
+                    else -> conversationItems.firstOrNull()?.conversation?.id
                 }
 
                 _uiState.update { current ->
+                    val secondaryScreen = when (val activeSecondary = current.secondaryScreen) {
+                        is SecondaryScreen.ChatDetail -> {
+                            when {
+                                conversationItems.any {
+                                    it.conversation.id == activeSecondary.conversationId
+                                } -> activeSecondary
+
+                                preferredId != null -> SecondaryScreen.ChatDetail(preferredId)
+
+                                else -> null
+                            }
+                        }
+
+                        null -> null
+                    }
+
                     current.copy(
+                        secondaryScreen = secondaryScreen,
                         conversation = current.conversation.copy(
-                            conversations = conversations,
+                            conversationItems = conversationItems,
                             selectedConversationId = preferredId
                         )
                     )
@@ -945,16 +997,17 @@ class ChatViewModel(
         activeConversationJob?.cancel()
         activeConversationBundle = null
 
-        if (conversationId == null) {
-            _uiState.update { current ->
-                current.copy(
-                    conversation = current.conversation.copy(
-                        messages = emptyList(),
-                        draft = "",
-                        isSending = false
-                    )
+        _uiState.update { current ->
+            current.copy(
+                conversation = current.conversation.copy(
+                    messages = emptyList(),
+                    draft = "",
+                    isSending = false
                 )
-            }
+            )
+        }
+
+        if (conversationId == null) {
             return
         }
 

@@ -25,6 +25,8 @@ class MainActivity : ComponentActivity() {
                 RealChatApp(
                     uiState = uiState,
                     onOpenScreen = viewModel::openScreen,
+                    onOpenConversationDetail = viewModel::openConversationDetail,
+                    onCloseSecondaryScreen = viewModel::closeSecondaryScreen,
                     onDraftChange = viewModel::updateDraft,
                     onSendMessage = viewModel::sendMessage,
                     onShowCreateConversationDialog = viewModel::showCreateConversationDialog,
@@ -32,7 +34,6 @@ class MainActivity : ComponentActivity() {
                     onPendingConversationTitleChange = viewModel::updatePendingConversationTitle,
                     onPendingConversationCardIdChange = viewModel::updatePendingConversationCardId,
                     onCreateConversation = viewModel::createConversation,
-                    onSelectConversation = viewModel::selectConversation,
                     onShowRenameConversationDialog = viewModel::showRenameConversationDialog,
                     onDismissRenameConversationDialog = viewModel::dismissRenameConversationDialog,
                     onPendingRenameTitleChange = viewModel::updatePendingRenameTitle,

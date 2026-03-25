@@ -1,9 +1,11 @@
 package io.github.c1921.realchat.data.chat
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Delete
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -80,6 +82,15 @@ data class ConversationMessageEntity(
     val createdAt: Long
 )
 
+data class ConversationListItemRow(
+    @Embedded
+    val conversation: ConversationEntity,
+    @ColumnInfo(name = "latestMessageRole")
+    val latestMessageRole: String?,
+    @ColumnInfo(name = "latestMessageContent")
+    val latestMessageContent: String?
+)
+
 @Dao
 interface CharacterCardDao {
     @Query("SELECT * FROM character_cards ORDER BY updatedAt DESC, id DESC")
@@ -108,6 +119,30 @@ interface CharacterCardDao {
 interface ConversationDao {
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC, id DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
+
+    @Query(
+        """
+        SELECT
+            conversations.*,
+            (
+                SELECT role
+                FROM conversation_messages
+                WHERE conversationId = conversations.id
+                ORDER BY id DESC
+                LIMIT 1
+            ) AS latestMessageRole,
+            (
+                SELECT content
+                FROM conversation_messages
+                WHERE conversationId = conversations.id
+                ORDER BY id DESC
+                LIMIT 1
+            ) AS latestMessageContent
+        FROM conversations
+        ORDER BY updatedAt DESC, id DESC
+        """
+    )
+    fun observeListItems(): Flow<List<ConversationListItemRow>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: Long): Flow<ConversationEntity?>

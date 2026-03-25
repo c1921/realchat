@@ -6,6 +6,7 @@ import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -15,6 +16,8 @@ import kotlinx.serialization.json.Json
 
 interface ConversationRepository {
     fun observeConversations(): Flow<List<Conversation>>
+
+    fun observeConversationListItems(): Flow<List<ConversationListItem>>
 
     fun observeConversationWithMessages(conversationId: Long): Flow<ConversationWithMessages?>
 
@@ -53,6 +56,23 @@ class RoomConversationRepository(
     override fun observeConversations(): Flow<List<Conversation>> {
         return conversationDao.observeAll().map { conversations ->
             conversations.map { entity -> entity.toDomain() }
+        }
+    }
+
+    override fun observeConversationListItems(): Flow<List<ConversationListItem>> {
+        return conversationDao.observeListItems().map { rows ->
+            rows.map { row ->
+                ConversationListItem(
+                    conversation = row.conversation.toDomain(),
+                    latestMessage = row.latestMessageContent?.let { content ->
+                        ChatMessage(
+                            role = ChatRole.entries.firstOrNull { it.wireName == row.latestMessageRole }
+                                ?: ChatRole.Assistant,
+                            content = content
+                        )
+                    }
+                )
+            }
         }
     }
 

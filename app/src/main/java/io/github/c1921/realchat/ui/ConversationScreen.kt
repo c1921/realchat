@@ -28,38 +28,30 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
+import io.github.c1921.realchat.model.ConversationListItem
 
 @Composable
-fun ConversationScreen(
+fun ConversationHomeScreen(
     conversation: ConversationUiState,
     cards: List<CharacterCard>,
     modifier: Modifier = Modifier,
-    onDraftChange: (String) -> Unit,
-    onSendMessage: () -> Unit,
+    onOpenConversationDetail: (Long) -> Unit,
     onShowCreateConversationDialog: () -> Unit,
     onDismissCreateConversationDialog: () -> Unit,
     onPendingConversationTitleChange: (String) -> Unit,
     onPendingConversationCardIdChange: (Long) -> Unit,
     onCreateConversation: () -> Unit,
-    onSelectConversation: (Long) -> Unit,
     onShowRenameConversationDialog: () -> Unit,
     onDismissRenameConversationDialog: () -> Unit,
     onPendingRenameTitleChange: (String) -> Unit,
     onRenameSelectedConversation: () -> Unit,
     onDeleteSelectedConversation: () -> Unit
 ) {
-    val messageListState = rememberLazyListState()
-
-    LaunchedEffect(conversation.messages.size) {
-        if (conversation.messages.isNotEmpty()) {
-            messageListState.animateScrollToItem(conversation.messages.lastIndex)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -110,21 +102,110 @@ fun ConversationScreen(
 
         ConversationList(
             conversation = conversation,
-            onSelectConversation = onSelectConversation
+            modifier = Modifier.weight(1f),
+            onOpenConversationDetail = onOpenConversationDetail
         )
+    }
 
-        val selectedConversation = conversation.selectedConversation()
-        if (selectedConversation == null) {
-            EmptyPanel("暂无会话。先创建一个带角色卡的新会话。")
-        } else {
-            SupportText(
-                text = "当前角色：${selectedConversation.characterSnapshot?.effectiveName().orEmpty().ifBlank { "未绑定" }}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+    if (conversation.showCreateDialog) {
+        CreateConversationDialog(
+            cards = cards,
+            selectedCardId = conversation.pendingCharacterCardId,
+            title = conversation.pendingConversationTitle,
+            onDismiss = onDismissCreateConversationDialog,
+            onTitleChange = onPendingConversationTitleChange,
+            onSelectCard = onPendingConversationCardIdChange,
+            onConfirm = onCreateConversation
+        )
+    }
+
+    if (conversation.showRenameDialog) {
+        RenameConversationDialog(
+            title = conversation.pendingRenameTitle,
+            onDismiss = onDismissRenameConversationDialog,
+            onTitleChange = onPendingRenameTitleChange,
+            onConfirm = onRenameSelectedConversation
+        )
+    }
+}
+
+@Composable
+fun ChatDetailScreen(
+    conversation: ConversationUiState,
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit,
+    onDraftChange: (String) -> Unit,
+    onSendMessage: () -> Unit
+) {
+    val messageListState = rememberLazyListState()
+    val selectedConversation = conversation.selectedConversation()
+    val roleName = selectedConversation?.characterSnapshot?.effectiveName()
+        .orEmpty()
+        .ifBlank { "未绑定角色" }
+
+    LaunchedEffect(conversation.messages.size) {
+        if (conversation.messages.isNotEmpty()) {
+            messageListState.animateScrollToItem(conversation.messages.lastIndex)
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Text("返回")
+            }
+            Text(
+                text = roleName,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
+        }
 
-            if (conversation.messages.isEmpty()) {
-                EmptyPanel("当前会话还没有消息。")
-            } else {
+        if (!conversation.hasValidConfig) {
+            SupportText(
+                text = "请先在设置中保存 API Key、模型和 Base URL。",
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        if (!conversation.errorText.isNullOrBlank()) {
+            SupportText(
+                text = conversation.errorText,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        if (!conversation.statusText.isNullOrBlank()) {
+            SupportText(
+                text = conversation.statusText,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+
+        when {
+            selectedConversation == null -> {
+                EmptyPanel(
+                    text = "暂无会话。",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            conversation.messages.isEmpty() -> {
+                EmptyPanel(
+                    text = "当前会话还没有消息。",
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            else -> {
                 LazyColumn(
                     state = messageListState,
                     modifier = Modifier
@@ -166,52 +247,33 @@ fun ConversationScreen(
             }
         }
     }
-
-    if (conversation.showCreateDialog) {
-        CreateConversationDialog(
-            cards = cards,
-            selectedCardId = conversation.pendingCharacterCardId,
-            title = conversation.pendingConversationTitle,
-            onDismiss = onDismissCreateConversationDialog,
-            onTitleChange = onPendingConversationTitleChange,
-            onSelectCard = onPendingConversationCardIdChange,
-            onConfirm = onCreateConversation
-        )
-    }
-
-    if (conversation.showRenameDialog) {
-        RenameConversationDialog(
-            title = conversation.pendingRenameTitle,
-            onDismiss = onDismissRenameConversationDialog,
-            onTitleChange = onPendingRenameTitleChange,
-            onConfirm = onRenameSelectedConversation
-        )
-    }
 }
 
 @Composable
 private fun ConversationList(
     conversation: ConversationUiState,
-    onSelectConversation: (Long) -> Unit
+    modifier: Modifier = Modifier,
+    onOpenConversationDetail: (Long) -> Unit
 ) {
-    if (conversation.conversations.isEmpty()) {
-        EmptyPanel("还没有任何会话。")
+    if (conversation.conversationItems.isEmpty()) {
+        EmptyPanel(
+            text = "还没有任何会话。",
+            modifier = modifier.fillMaxWidth()
+        )
         return
     }
 
     LazyColumn(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 120.dp, max = 220.dp),
+        modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        items(conversation.conversations, key = { it.id }) { item ->
-            val selected = item.id == conversation.selectedConversationId
+        items(conversation.conversationItems, key = { it.conversation.id }) { item ->
+            val selected = item.conversation.id == conversation.selectedConversationId
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onSelectConversation(item.id) }
+                    .clickable { onOpenConversationDetail(item.conversation.id) }
             ) {
                 Column(
                     modifier = Modifier
@@ -224,13 +286,25 @@ private fun ConversationList(
                             }
                         )
                         .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text(text = item.effectiveTitle(), style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = item.characterSnapshot?.effectiveName().orEmpty().ifBlank { "未绑定角色卡" },
+                        text = item.conversation.effectiveTitle(),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = item.conversation.characterSnapshot?.effectiveName()
+                            .orEmpty()
+                            .ifBlank { "未绑定角色" },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = item.summaryText(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -356,11 +430,7 @@ private fun MessageCard(message: ChatMessage) {
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
-                text = when (message.role) {
-                    ChatRole.User -> "你"
-                    ChatRole.Assistant -> "角色"
-                    ChatRole.System -> "系统"
-                },
+                text = message.role.label(),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -370,9 +440,12 @@ private fun MessageCard(message: ChatMessage) {
 }
 
 @Composable
-private fun EmptyPanel(text: String) {
+private fun EmptyPanel(
+    text: String,
+    modifier: Modifier = Modifier
+) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 120.dp)
             .background(
@@ -386,6 +459,19 @@ private fun EmptyPanel(text: String) {
             text = text,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+private fun ConversationListItem.summaryText(): String {
+    val message = latestMessage ?: return "暂无消息"
+    return "${message.role.label()}：${message.content.ifBlank { "暂无消息" }}"
+}
+
+private fun ChatRole.label(): String {
+    return when (this) {
+        ChatRole.User -> "你"
+        ChatRole.Assistant -> "角色"
+        ChatRole.System -> "系统"
     }
 }
 

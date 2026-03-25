@@ -93,6 +93,40 @@ class RoomConversationRepositoryTest {
         assertEquals("上线。", bundle?.messages?.first()?.content)
     }
 
+    @Test
+    fun observeConversationListItems_returnsLatestMessageAndUpdatedOrder() = runBlocking {
+        val database = inMemoryDatabase()
+        val conversationRepository = RoomConversationRepository(database)
+        val firstConversationId = conversationRepository.createConversation(
+            CharacterCard(
+                id = 1L,
+                name = "Alice",
+                firstMes = "初始问候"
+            )
+        )
+        val secondConversationId = conversationRepository.createConversation(
+            CharacterCard(
+                id = 2L,
+                name = "Bob",
+                firstMes = "第二个问候"
+            )
+        )
+
+        conversationRepository.appendSuccessfulExchange(
+            conversationId = firstConversationId,
+            userContent = "更新一下",
+            assistantMessage = ChatMessage(ChatRole.Assistant, "最新回复")
+        )
+
+        val items = conversationRepository.observeConversationListItems()
+            .first { it.size == 2 }
+
+        assertEquals(listOf(firstConversationId, secondConversationId), items.map { it.conversation.id })
+        assertEquals("最新回复", items.first().latestMessage?.content)
+        assertEquals(ChatRole.Assistant, items.first().latestMessage?.role)
+        assertEquals("第二个问候", items.last().latestMessage?.content)
+    }
+
     private fun inMemoryDatabase(): AppDatabase {
         val database = Room.inMemoryDatabaseBuilder(
             context,

@@ -196,6 +196,11 @@ data class Conversation(
     }
 }
 
+data class ConversationListItem(
+    val conversation: Conversation,
+    val latestMessage: ChatMessage? = null
+)
+
 data class ConversationWithMessages(
     val conversation: Conversation,
     val messages: List<ChatMessage>

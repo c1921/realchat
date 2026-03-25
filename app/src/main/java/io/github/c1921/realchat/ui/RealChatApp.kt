@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -18,6 +19,8 @@ import androidx.compose.ui.platform.LocalContext
 fun RealChatApp(
     uiState: MainUiState,
     onOpenScreen: (AppScreen) -> Unit,
+    onOpenConversationDetail: (Long) -> Unit,
+    onCloseSecondaryScreen: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSendMessage: () -> Unit,
     onShowCreateConversationDialog: () -> Unit,
@@ -25,7 +28,6 @@ fun RealChatApp(
     onPendingConversationTitleChange: (String) -> Unit,
     onPendingConversationCardIdChange: (Long) -> Unit,
     onCreateConversation: () -> Unit,
-    onSelectConversation: (Long) -> Unit,
     onShowRenameConversationDialog: () -> Unit,
     onDismissRenameConversationDialog: () -> Unit,
     onPendingRenameTitleChange: (String) -> Unit,
@@ -50,6 +52,7 @@ fun RealChatApp(
     onPersonaDescriptionChange: (String) -> Unit,
     onSaveSettings: () -> Unit
 ) {
+    val chatDetailScreen = uiState.secondaryScreen as? SecondaryScreen.ChatDetail
     val context = LocalContext.current
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -92,33 +95,45 @@ fun RealChatApp(
         }
     }
 
+    if (chatDetailScreen != null) {
+        BackHandler(onBack = onCloseSecondaryScreen)
+    }
+
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                AppScreen.entries.forEach { screen ->
-                    NavigationBarItem(
-                        selected = uiState.currentScreen == screen,
-                        onClick = { onOpenScreen(screen) },
-                        label = { Text(screen.label()) },
-                        icon = { Text(screen.iconLabel()) }
-                    )
+            if (chatDetailScreen == null) {
+                NavigationBar {
+                    AppScreen.entries.forEach { screen ->
+                        NavigationBarItem(
+                            selected = uiState.currentScreen == screen,
+                            onClick = { onOpenScreen(screen) },
+                            label = { Text(screen.label()) },
+                            icon = { Text(screen.iconLabel()) }
+                        )
+                    }
                 }
             }
         }
     ) { innerPadding ->
-        when (uiState.currentScreen) {
-            AppScreen.Conversations -> ConversationScreen(
+        when {
+            chatDetailScreen != null -> ChatDetailScreen(
+                conversation = uiState.conversation,
+                modifier = Modifier.padding(innerPadding),
+                onBack = onCloseSecondaryScreen,
+                onDraftChange = onDraftChange,
+                onSendMessage = onSendMessage
+            )
+
+            uiState.currentScreen == AppScreen.Conversations -> ConversationHomeScreen(
                 conversation = uiState.conversation,
                 cards = uiState.characters.cards,
                 modifier = Modifier.padding(innerPadding),
-                onDraftChange = onDraftChange,
-                onSendMessage = onSendMessage,
+                onOpenConversationDetail = onOpenConversationDetail,
                 onShowCreateConversationDialog = onShowCreateConversationDialog,
                 onDismissCreateConversationDialog = onDismissCreateConversationDialog,
                 onPendingConversationTitleChange = onPendingConversationTitleChange,
                 onPendingConversationCardIdChange = onPendingConversationCardIdChange,
                 onCreateConversation = onCreateConversation,
-                onSelectConversation = onSelectConversation,
                 onShowRenameConversationDialog = onShowRenameConversationDialog,
                 onDismissRenameConversationDialog = onDismissRenameConversationDialog,
                 onPendingRenameTitleChange = onPendingRenameTitleChange,
@@ -126,7 +141,7 @@ fun RealChatApp(
                 onDeleteSelectedConversation = onDeleteSelectedConversation
             )
 
-            AppScreen.Characters -> CharacterCardsRoute(
+            uiState.currentScreen == AppScreen.Characters -> CharacterCardsRoute(
                 state = uiState.characters,
                 modifier = Modifier.padding(innerPadding),
                 onOpenCreateCharacterEditor = onOpenCreateCharacterEditor,
@@ -142,7 +157,7 @@ fun RealChatApp(
                 onRequestCharacterCardExport = onRequestCharacterCardExport
             )
 
-            AppScreen.Settings -> SettingsScreen(
+            else -> SettingsScreen(
                 settings = uiState.settings,
                 modifier = Modifier.padding(innerPadding),
                 onApiKeyChange = onApiKeyChange,
