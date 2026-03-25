@@ -4,8 +4,11 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import io.github.c1921.realchat.data.chat.AppDatabase
+import io.github.c1921.realchat.data.chat.ChatHistoryRepository
 import io.github.c1921.realchat.data.chat.ChatProvider
 import io.github.c1921.realchat.data.chat.DeepSeekChatProvider
+import io.github.c1921.realchat.data.chat.RoomChatHistoryRepository
 import io.github.c1921.realchat.data.chat.buildChatCompletionsUrl
 import io.github.c1921.realchat.data.settings.DataStoreSettingsRepository
 import io.github.c1921.realchat.data.settings.SettingsRepository
@@ -17,6 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 enum class AppScreen {
@@ -48,12 +53,15 @@ data class MainUiState(
 
 class ChatViewModel(
     private val settingsRepository: SettingsRepository,
-    private val chatProvider: ChatProvider
+    private val chatProvider: ChatProvider,
+    private val chatHistoryRepository: ChatHistoryRepository
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     private var activeConfig: ProviderConfig = ProviderConfig()
+    private var hasRestoredChatState = false
+    private val draftWriteMutex = Mutex()
 
     init {
         viewModelScope.launch {
@@ -70,6 +78,30 @@ class ChatViewModel(
                             baseUrl = config.baseUrl
                         )
                     )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            chatHistoryRepository.observeState().collect { persistedState ->
+                _uiState.update { current ->
+                    val nextChatState = current.chat.copy(
+                        messages = persistedState.messages,
+                        draft = persistedState.draft
+                    )
+
+                    if (!hasRestoredChatState) {
+                        hasRestoredChatState = true
+                        current.copy(
+                            chat = nextChatState.copy(
+                                isSending = false,
+                                errorText = null
+                            ),
+                            settings = current.settings.copy(statusText = null)
+                        )
+                    } else {
+                        current.copy(chat = nextChatState)
+                    }
                 }
             }
         }
@@ -95,6 +127,14 @@ class ChatViewModel(
                     errorText = null
                 )
             )
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                draftWriteMutex.withLock {
+                    chatHistoryRepository.updateDraft(draft)
+                }
+            }
         }
     }
 
@@ -216,29 +256,46 @@ class ChatViewModel(
                 config = activeConfig
             )
 
-            result.onSuccess { assistantMessage ->
-                _uiState.update { current ->
-                    current.copy(
-                        chat = current.chat.copy(
-                            messages = current.chat.messages +
-                                ChatMessage(ChatRole.User, userContent) +
-                                assistantMessage,
-                            draft = "",
-                            isSending = false,
-                            errorText = null
+            result.fold(
+                onSuccess = { assistantMessage ->
+                    runCatching {
+                        chatHistoryRepository.appendSuccessfulExchange(
+                            userContent = userContent,
+                            assistantMessage = assistantMessage
                         )
-                    )
-                }
-            }.onFailure { throwable ->
-                _uiState.update { current ->
-                    current.copy(
-                        chat = current.chat.copy(
-                            isSending = false,
-                            errorText = throwable.message ?: "请求失败。"
+                    }.onSuccess {
+                        _uiState.update { current ->
+                            current.copy(
+                                chat = current.chat.copy(
+                                    messages = requestMessages + assistantMessage,
+                                    draft = "",
+                                    isSending = false,
+                                    errorText = null
+                                )
+                            )
+                        }
+                    }.onFailure { throwable ->
+                        _uiState.update { current ->
+                            current.copy(
+                                chat = current.chat.copy(
+                                    isSending = false,
+                                    errorText = throwable.message ?: "保存聊天记录失败。"
+                                )
+                            )
+                        }
+                    }
+                },
+                onFailure = { throwable ->
+                    _uiState.update { current ->
+                        current.copy(
+                            chat = current.chat.copy(
+                                isSending = false,
+                                errorText = throwable.message ?: "请求失败。"
+                            )
                         )
-                    )
+                    }
                 }
-            }
+            )
         }
     }
 
@@ -248,10 +305,13 @@ class ChatViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val repository = DataStoreSettingsRepository(context)
             val provider = DeepSeekChatProvider()
+            val database = AppDatabase.getInstance(context)
+            val chatHistoryRepository = RoomChatHistoryRepository(database.chatHistoryDao())
             @Suppress("UNCHECKED_CAST")
             return ChatViewModel(
                 settingsRepository = repository,
-                chatProvider = provider
+                chatProvider = provider,
+                chatHistoryRepository = chatHistoryRepository
             ) as T
         }
     }

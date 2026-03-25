@@ -113,7 +113,7 @@ private fun ChatScreen(
                 )
             } else {
                 SupportText(
-                    text = "当前模型：${settings.model}",
+                    text = "新消息将使用模型：${settings.model}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
