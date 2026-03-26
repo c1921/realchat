@@ -1,26 +1,39 @@
 package io.github.c1921.realchat.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.c1921.realchat.model.ProviderType
 
 @androidx.compose.runtime.Composable
 fun SettingsScreen(
     settings: SettingsUiState,
     modifier: Modifier = Modifier,
+    onProviderTypeChange: (ProviderType) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
@@ -28,6 +41,8 @@ fun SettingsScreen(
     onPersonaDescriptionChange: (String) -> Unit,
     onSaveSettings: () -> Unit
 ) {
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -39,6 +54,52 @@ fun SettingsScreen(
             title = "设置",
             actions = { }
         )
+
+        Text(
+            text = "AI Provider",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { providerMenuExpanded = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag(PROVIDER_SELECTOR_TAG)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = settings.providerType.label(),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (providerMenuExpanded) "▲" else "▼",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            DropdownMenu(
+                expanded = providerMenuExpanded,
+                onDismissRequest = { providerMenuExpanded = false }
+            ) {
+                ProviderType.entries.forEach { providerType ->
+                    DropdownMenuItem(
+                        modifier = Modifier.testTag(providerType.optionTag()),
+                        text = { Text(providerType.label()) },
+                        onClick = {
+                            onProviderTypeChange(providerType)
+                            providerMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
 
         OutlinedTextField(
             value = settings.apiKey,
@@ -84,7 +145,7 @@ fun SettingsScreen(
         )
 
         SupportText(
-            text = "DeepSeek 默认 Base URL：https://api.deepseek.com",
+            text = settings.providerType.supportText(),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
@@ -109,4 +170,26 @@ fun SettingsScreen(
             Text("保存设置")
         }
     }
+}
+
+private fun ProviderType.label(): String {
+    return when (this) {
+        ProviderType.DEEPSEEK -> "DeepSeek"
+        ProviderType.OPENAI -> "OpenAI"
+        ProviderType.OPENAI_COMPATIBLE -> "自定义兼容"
+    }
+}
+
+private fun ProviderType.supportText(): String {
+    return when (this) {
+        ProviderType.DEEPSEEK -> "DeepSeek 默认 Base URL：https://api.deepseek.com"
+        ProviderType.OPENAI -> "OpenAI 官方 Base URL：https://api.openai.com/v1，请填写可用模型名。"
+        ProviderType.OPENAI_COMPATIBLE -> "请填写兼容 OpenAI Chat Completions 的 Base URL 和模型。"
+    }
+}
+
+private const val PROVIDER_SELECTOR_TAG = "provider_selector"
+
+private fun ProviderType.optionTag(): String {
+    return "provider_option_${name.lowercase()}"
 }

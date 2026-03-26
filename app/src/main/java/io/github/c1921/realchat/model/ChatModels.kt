@@ -2,7 +2,30 @@ package io.github.c1921.realchat.model
 
 import kotlinx.serialization.Serializable
 
+enum class ProviderType {
+    DEEPSEEK,
+    OPENAI,
+    OPENAI_COMPATIBLE;
+
+    fun defaultModel(): String {
+        return when (this) {
+            DEEPSEEK -> "deepseek-chat"
+            OPENAI -> ""
+            OPENAI_COMPATIBLE -> ""
+        }
+    }
+
+    fun defaultBaseUrl(): String {
+        return when (this) {
+            DEEPSEEK -> "https://api.deepseek.com"
+            OPENAI -> "https://api.openai.com/v1"
+            OPENAI_COMPATIBLE -> ""
+        }
+    }
+}
+
 data class ProviderConfig(
+    val providerType: ProviderType = DEFAULT_PROVIDER_TYPE,
     val apiKey: String = "",
     val model: String = DEFAULT_MODEL,
     val baseUrl: String = DEFAULT_BASE_URL
@@ -23,8 +46,23 @@ data class ProviderConfig(
     }
 
     companion object {
+        val DEFAULT_PROVIDER_TYPE = ProviderType.DEEPSEEK
         const val DEFAULT_MODEL = "deepseek-chat"
         const val DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+        fun defaultsByProvider(): Map<ProviderType, ProviderConfig> {
+            return ProviderType.entries.associateWith { providerType ->
+                defaultsFor(providerType)
+            }
+        }
+
+        fun defaultsFor(providerType: ProviderType): ProviderConfig {
+            return ProviderConfig(
+                providerType = providerType,
+                model = providerType.defaultModel(),
+                baseUrl = providerType.defaultBaseUrl()
+            )
+        }
     }
 }
 

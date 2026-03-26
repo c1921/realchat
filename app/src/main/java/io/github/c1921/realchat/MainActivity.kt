@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
                     onRequestCharacterCardExport = viewModel::requestCharacterCardExport,
                     onClearPendingCharacterCardExport = viewModel::clearPendingCharacterCardExport,
                     onCharacterCardExportCompleted = viewModel::onCharacterCardExportCompleted,
+                    onProviderTypeChange = viewModel::updateProviderType,
                     onApiKeyChange = viewModel::updateApiKey,
                     onModelChange = viewModel::updateModel,
                     onBaseUrlChange = viewModel::updateBaseUrl,

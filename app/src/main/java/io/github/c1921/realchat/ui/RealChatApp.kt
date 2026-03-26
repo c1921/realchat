@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import io.github.c1921.realchat.model.ProviderType
 
 @Composable
 fun RealChatApp(
@@ -45,6 +46,7 @@ fun RealChatApp(
     onRequestCharacterCardExport: (Long) -> Unit,
     onClearPendingCharacterCardExport: () -> Unit,
     onCharacterCardExportCompleted: (String?) -> Unit,
+    onProviderTypeChange: (ProviderType) -> Unit,
     onApiKeyChange: (String) -> Unit,
     onModelChange: (String) -> Unit,
     onBaseUrlChange: (String) -> Unit,
@@ -160,6 +162,7 @@ fun RealChatApp(
             else -> SettingsScreen(
                 settings = uiState.settings,
                 modifier = Modifier.padding(innerPadding),
+                onProviderTypeChange = onProviderTypeChange,
                 onApiKeyChange = onApiKeyChange,
                 onModelChange = onModelChange,
                 onBaseUrlChange = onBaseUrlChange,

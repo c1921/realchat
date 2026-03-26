@@ -10,10 +10,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.JsonObject
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,7 +24,7 @@ internal fun buildChatCompletionsUrl(baseUrl: String): String {
     return baseUrl.trim().trimEnd('/') + "/chat/completions"
 }
 
-internal fun extractDeepSeekErrorMessage(statusCode: Int, responseBody: String): String {
+internal fun extractProviderErrorMessage(statusCode: Int, responseBody: String): String {
     if (responseBody.isBlank()) {
         return "请求失败（HTTP $statusCode）。"
     }
@@ -54,7 +54,7 @@ internal fun extractDeepSeekErrorMessage(statusCode: Int, responseBody: String):
         ?: "请求失败（HTTP $statusCode）。"
 }
 
-class DeepSeekChatProvider(
+class OpenAiCompatibleChatProvider(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -74,10 +74,10 @@ class DeepSeekChatProvider(
         val httpUrl = requestUrl.toHttpUrlOrNull()
             ?: return Result.failure(IllegalArgumentException("Base URL 无效。"))
 
-        val requestBody = DeepSeekChatRequest(
+        val requestBody = OpenAiCompatibleChatRequest(
             model = normalizedConfig.model,
             messages = messages.map { message ->
-                DeepSeekWireMessage(
+                OpenAiCompatibleWireMessage(
                     role = message.role.wireName,
                     content = message.content
                 )
@@ -100,14 +100,15 @@ class DeepSeekChatProvider(
                     val responseText = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         throw IOException(
-                            extractDeepSeekErrorMessage(
+                            extractProviderErrorMessage(
                                 statusCode = response.code,
                                 responseBody = responseText
                             )
                         )
                     }
 
-                    val responseBodyModel = json.decodeFromString<DeepSeekChatResponse>(responseText)
+                    val responseBodyModel =
+                        json.decodeFromString<OpenAiCompatibleChatResponse>(responseText)
                     val content = responseBodyModel.choices
                         .firstOrNull()
                         ?.message
@@ -139,23 +140,23 @@ class DeepSeekChatProvider(
 }
 
 @Serializable
-private data class DeepSeekChatRequest(
+private data class OpenAiCompatibleChatRequest(
     val model: String,
-    val messages: List<DeepSeekWireMessage>
+    val messages: List<OpenAiCompatibleWireMessage>
 )
 
 @Serializable
-private data class DeepSeekWireMessage(
+private data class OpenAiCompatibleWireMessage(
     val role: String,
     val content: String
 )
 
 @Serializable
-private data class DeepSeekChatResponse(
-    val choices: List<DeepSeekChoice> = emptyList()
+private data class OpenAiCompatibleChatResponse(
+    val choices: List<OpenAiCompatibleChoice> = emptyList()
 )
 
 @Serializable
-private data class DeepSeekChoice(
-    val message: DeepSeekWireMessage? = null
+private data class OpenAiCompatibleChoice(
+    val message: OpenAiCompatibleWireMessage? = null
 )

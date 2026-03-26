@@ -14,6 +14,7 @@ import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.ProviderConfig
+import io.github.c1921.realchat.model.ProviderType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -121,23 +122,117 @@ class ChatViewModelTest {
         assertEquals(10L, state.conversation.selectedConversationId)
         assertEquals("你好", state.conversation.messages.single().content)
     }
+
+    @Test
+    fun updateProviderType_switchesBetweenProviderSpecificDrafts() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val preferencesRepository = FakeAppPreferencesRepository()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateApiKey("deepseek-key")
+        viewModel.updateProviderType(ProviderType.OPENAI)
+        viewModel.updateApiKey("openai-key")
+        viewModel.updateModel("gpt-4o-mini")
+        viewModel.updateProviderType(ProviderType.DEEPSEEK)
+        advanceUntilIdle()
+
+        val settings = viewModel.uiState.value.settings
+        assertEquals(ProviderType.DEEPSEEK, settings.providerType)
+        assertEquals("deepseek-key", settings.apiKey)
+        assertEquals(ProviderConfig.DEFAULT_MODEL, settings.model)
+        assertEquals(ProviderConfig.DEFAULT_BASE_URL, settings.baseUrl)
+
+        viewModel.updateProviderType(ProviderType.OPENAI)
+        advanceUntilIdle()
+
+        val openAiSettings = viewModel.uiState.value.settings
+        assertEquals(ProviderType.OPENAI, openAiSettings.providerType)
+        assertEquals("openai-key", openAiSettings.apiKey)
+        assertEquals("gpt-4o-mini", openAiSettings.model)
+        assertEquals("https://api.openai.com/v1", openAiSettings.baseUrl)
+    }
+
+    @Test
+    fun saveSettings_persistsAllProviderDrafts() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val preferencesRepository = FakeAppPreferencesRepository()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateApiKey("deepseek-key")
+        viewModel.updateProviderType(ProviderType.OPENAI)
+        viewModel.updateApiKey("openai-key")
+        viewModel.updateModel("gpt-4o-mini")
+        viewModel.saveSettings()
+        advanceUntilIdle()
+
+        assertEquals(ProviderType.OPENAI, preferencesRepository.preferences.value.selectedProviderType)
+        assertEquals(ProviderType.OPENAI, viewModel.uiState.value.settings.providerType)
+        assertEquals("https://api.openai.com/v1", preferencesRepository.preferences.value.providerConfig.baseUrl)
+        assertEquals(
+            "deepseek-key",
+            preferencesRepository.preferences.value.providerConfigs
+                .getValue(ProviderType.DEEPSEEK)
+                .apiKey
+        )
+        assertEquals(
+            "openai-key",
+            preferencesRepository.preferences.value.providerConfigs
+                .getValue(ProviderType.OPENAI)
+                .apiKey
+        )
+    }
 }
 
 private class FakeAppPreferencesRepository(
     initial: AppPreferences = AppPreferences(
-        providerConfig = ProviderConfig(
-            apiKey = "test-key",
-            model = ProviderConfig.DEFAULT_MODEL,
-            baseUrl = ProviderConfig.DEFAULT_BASE_URL
-        )
+        selectedProviderType = ProviderType.DEEPSEEK,
+        providerConfigs = ProviderConfig.defaultsByProvider().toMutableMap().apply {
+            this[ProviderType.DEEPSEEK] = ProviderConfig(
+                providerType = ProviderType.DEEPSEEK,
+                apiKey = "test-key",
+                model = ProviderConfig.DEFAULT_MODEL,
+                baseUrl = ProviderConfig.DEFAULT_BASE_URL
+            )
+            this[ProviderType.OPENAI] = ProviderConfig.defaultsFor(ProviderType.OPENAI)
+            this[ProviderType.OPENAI_COMPATIBLE] =
+                ProviderConfig.defaultsFor(ProviderType.OPENAI_COMPATIBLE)
+        }
     )
 ) : AppPreferencesRepository {
     val preferences = MutableStateFlow(initial)
 
     override fun observePreferences(): Flow<AppPreferences> = preferences
 
-    override suspend fun saveProviderConfig(config: ProviderConfig) {
-        preferences.update { current -> current.copy(providerConfig = config) }
+    override suspend fun saveProviderSettings(
+        selectedProviderType: ProviderType,
+        providerConfigs: Map<ProviderType, ProviderConfig>
+    ) {
+        preferences.update { current ->
+            current.copy(
+                selectedProviderType = selectedProviderType,
+                providerConfigs = providerConfigs
+            )
+        }
     }
 
     override suspend fun saveUserPersona(userPersona: io.github.c1921.realchat.model.UserPersona) {

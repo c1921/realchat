@@ -10,7 +10,7 @@ import io.github.c1921.realchat.data.character.RoomCharacterCardRepository
 import io.github.c1921.realchat.data.chat.AppDatabase
 import io.github.c1921.realchat.data.chat.ChatProvider
 import io.github.c1921.realchat.data.chat.ConversationRepository
-import io.github.c1921.realchat.data.chat.DeepSeekChatProvider
+import io.github.c1921.realchat.data.chat.OpenAiCompatibleChatProvider
 import io.github.c1921.realchat.data.chat.PromptComposer
 import io.github.c1921.realchat.data.chat.RoomConversationRepository
 import io.github.c1921.realchat.data.chat.buildChatCompletionsUrl
@@ -24,6 +24,7 @@ import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.ProviderConfig
+import io.github.c1921.realchat.model.ProviderType
 import io.github.c1921.realchat.model.UserPersona
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -111,6 +112,7 @@ data class CharacterCardsUiState(
 )
 
 data class SettingsUiState(
+    val providerType: ProviderType = ProviderConfig.DEFAULT_PROVIDER_TYPE,
     val apiKey: String = "",
     val model: String = ProviderConfig.DEFAULT_MODEL,
     val baseUrl: String = ProviderConfig.DEFAULT_BASE_URL,
@@ -141,10 +143,13 @@ class ChatViewModel(
     private val draftWriteMutex = Mutex()
 
     private var activePreferences: AppPreferences = AppPreferences()
+    private var providerDrafts: MutableMap<ProviderType, ProviderConfig> =
+        ProviderConfig.defaultsByProvider().toMutableMap()
     private var availableCards: List<CharacterCard> = emptyList()
     private var activeConversationBundle: ConversationWithMessages? = null
     private var activeConversationJob: Job? = null
-    private var lastAppliedProviderConfig: ProviderConfig? = null
+    private var lastAppliedSelectedProviderType: ProviderType? = null
+    private var lastAppliedProviderConfigs: Map<ProviderType, ProviderConfig>? = null
     private var lastAppliedUserPersona: UserPersona? = null
 
     init {
@@ -390,10 +395,20 @@ class ChatViewModel(
     }
 
     fun updateApiKey(apiKey: String) {
+        updateCurrentProviderDraft { currentDraft ->
+            currentDraft.copy(apiKey = apiKey)
+        }
+    }
+
+    fun updateProviderType(providerType: ProviderType) {
+        val targetDraft = providerDraft(providerType)
         _uiState.update { current ->
             current.copy(
                 settings = current.settings.copy(
-                    apiKey = apiKey,
+                    providerType = providerType,
+                    apiKey = targetDraft.apiKey,
+                    model = targetDraft.model,
+                    baseUrl = targetDraft.baseUrl,
                     errorText = null,
                     statusText = null
                 )
@@ -402,26 +417,14 @@ class ChatViewModel(
     }
 
     fun updateModel(model: String) {
-        _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    model = model,
-                    errorText = null,
-                    statusText = null
-                )
-            )
+        updateCurrentProviderDraft { currentDraft ->
+            currentDraft.copy(model = model)
         }
     }
 
     fun updateBaseUrl(baseUrl: String) {
-        _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    baseUrl = baseUrl,
-                    errorText = null,
-                    statusText = null
-                )
-            )
+        updateCurrentProviderDraft { currentDraft ->
+            currentDraft.copy(baseUrl = baseUrl)
         }
     }
 
@@ -451,18 +454,25 @@ class ChatViewModel(
 
     fun saveSettings() {
         val form = uiState.value.settings
-        val config = ProviderConfig(
+        val selectedConfig = ProviderConfig(
+            providerType = form.providerType,
             apiKey = form.apiKey,
             model = form.model,
             baseUrl = form.baseUrl
         ).normalized()
+        providerDrafts[form.providerType] = selectedConfig
+        val providerConfigs = ProviderType.entries.associateWith { providerType ->
+            (providerDrafts[providerType] ?: ProviderConfig.defaultsFor(providerType))
+                .copy(providerType = providerType)
+                .normalized()
+        }
         val persona = UserPersona(
             displayName = form.personaName,
             description = form.personaDescription
         ).normalized()
 
-        if (config.baseUrl.isNotEmpty()) {
-            val endpoint = buildChatCompletionsUrl(config.baseUrl)
+        if (selectedConfig.baseUrl.isNotEmpty()) {
+            val endpoint = buildChatCompletionsUrl(selectedConfig.baseUrl)
             if (endpoint.toHttpUrlOrNull() == null) {
                 _uiState.update { current ->
                     current.copy(
@@ -478,22 +488,27 @@ class ChatViewModel(
 
         viewModelScope.launch {
             runCatching {
-                appPreferencesRepository.saveProviderConfig(config)
+                appPreferencesRepository.saveProviderSettings(
+                    selectedProviderType = form.providerType,
+                    providerConfigs = providerConfigs
+                )
                 appPreferencesRepository.saveUserPersona(persona)
             }.onSuccess {
+                providerDrafts = providerConfigs.toMutableMap()
                 _uiState.update { current ->
                     current.copy(
                         settings = current.settings.copy(
-                            apiKey = config.apiKey,
-                            model = config.model,
-                            baseUrl = config.baseUrl,
+                            providerType = selectedConfig.providerType,
+                            apiKey = selectedConfig.apiKey,
+                            model = selectedConfig.model,
+                            baseUrl = selectedConfig.baseUrl,
                             personaName = persona.displayName,
                             personaDescription = persona.description,
                             errorText = null,
                             statusText = "设置已保存。"
                         ),
                         conversation = current.conversation.copy(
-                            hasValidConfig = config.hasRequiredFields(),
+                            hasValidConfig = selectedConfig.hasRequiredFields(),
                             errorText = null
                         )
                     )
@@ -509,6 +524,55 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    private fun updateCurrentProviderDraft(
+        transform: (ProviderConfig) -> ProviderConfig
+    ) {
+        val providerType = uiState.value.settings.providerType
+        val updatedDraft = transform(providerDraft(providerType))
+            .copy(providerType = providerType)
+        providerDrafts[providerType] = updatedDraft
+        _uiState.update { current ->
+            current.copy(
+                settings = current.settings.copy(
+                    apiKey = updatedDraft.apiKey,
+                    model = updatedDraft.model,
+                    baseUrl = updatedDraft.baseUrl,
+                    errorText = null,
+                    statusText = null
+                )
+            )
+        }
+    }
+
+    private fun providerDraft(providerType: ProviderType): ProviderConfig {
+        return providerDrafts[providerType]
+            ?: ProviderConfig.defaultsFor(providerType)
+    }
+
+    private fun syncSettingsState(
+        current: SettingsUiState,
+        selectedProviderType: ProviderType,
+        userPersona: UserPersona,
+        applyProviderDraft: Boolean
+    ): SettingsUiState {
+        val settingsWithProvider = if (applyProviderDraft) {
+            val draft = providerDraft(selectedProviderType)
+            current.copy(
+                providerType = selectedProviderType,
+                apiKey = draft.apiKey,
+                model = draft.model,
+                baseUrl = draft.baseUrl
+            )
+        } else {
+            current
+        }
+
+        return settingsWithProvider.copy(
+            personaName = userPersona.displayName,
+            personaDescription = userPersona.description
+        )
     }
 
     fun openCreateCharacterEditor() {
@@ -769,7 +833,7 @@ class ChatViewModel(
             _uiState.update { current ->
                 current.copy(
                     conversation = current.conversation.copy(
-                        errorText = "请先在设置中保存 API Key、模型和 Base URL。"
+                        errorText = "请先在设置中保存 AI Provider、API Key、模型和 Base URL。"
                     )
                 )
             }
@@ -872,26 +936,34 @@ class ChatViewModel(
             appPreferencesRepository.observePreferences().collect { preferences ->
                 activePreferences = preferences
                 val normalizedConfig = preferences.providerConfig.normalized()
-                val providerChanged = lastAppliedProviderConfig != preferences.providerConfig
+                val providerChanged = lastAppliedSelectedProviderType != preferences.selectedProviderType ||
+                    lastAppliedProviderConfigs != preferences.providerConfigs
                 val personaChanged = lastAppliedUserPersona != preferences.userPersona
-                lastAppliedProviderConfig = preferences.providerConfig
+                lastAppliedSelectedProviderType = preferences.selectedProviderType
+                lastAppliedProviderConfigs = preferences.providerConfigs
                 lastAppliedUserPersona = preferences.userPersona
+                if (providerChanged) {
+                    providerDrafts = preferences.providerConfigs.mapValuesTo(mutableMapOf()) { (providerType, config) ->
+                        config.copy(providerType = providerType)
+                    }
+                }
                 _uiState.update { current ->
+                    val syncedSettings = if (providerChanged || personaChanged) {
+                        syncSettingsState(
+                            current = current.settings,
+                            selectedProviderType = preferences.selectedProviderType,
+                            userPersona = preferences.userPersona,
+                            applyProviderDraft = providerChanged
+                        )
+                    } else {
+                        current.settings
+                    }
+
                     current.copy(
                         conversation = current.conversation.copy(
                             hasValidConfig = normalizedConfig.hasRequiredFields()
                         ),
-                        settings = if (providerChanged || personaChanged) {
-                            current.settings.copy(
-                                apiKey = preferences.providerConfig.apiKey,
-                                model = preferences.providerConfig.model,
-                                baseUrl = preferences.providerConfig.baseUrl,
-                                personaName = preferences.userPersona.displayName,
-                                personaDescription = preferences.userPersona.description
-                            )
-                        } else {
-                            current.settings
-                        }
+                        settings = syncedSettings
                     )
                 }
             }
@@ -1101,7 +1173,7 @@ class ChatViewModel(
             val preferencesRepository = DataStoreAppPreferencesRepository(context)
             val characterCardRepository = RoomCharacterCardRepository(database.characterCardDao())
             val conversationRepository = RoomConversationRepository(database)
-            val provider = DeepSeekChatProvider()
+            val provider = OpenAiCompatibleChatProvider()
             @Suppress("UNCHECKED_CAST")
             return ChatViewModel(
                 appPreferencesRepository = preferencesRepository,
