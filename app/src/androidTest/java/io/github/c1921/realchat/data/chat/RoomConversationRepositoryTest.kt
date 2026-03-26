@@ -1,5 +1,6 @@
 package io.github.c1921.realchat.data.chat
 
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -127,6 +129,42 @@ class RoomConversationRepositoryTest {
         assertEquals("第二个问候", items.last().latestMessage?.content)
     }
 
+    @Test
+    fun migrateFrom2To3_removesTitleColumnAndKeepsConversationData() = runBlocking {
+        seedVersion2Database()
+
+        val database = Room.databaseBuilder(
+            context,
+            AppDatabase::class.java,
+            TEST_DATABASE_NAME
+        )
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .allowMainThreadQueries()
+            .build()
+        databases += database
+
+        val columns = mutableListOf<String>()
+        database.openHelper.writableDatabase
+            .query("PRAGMA table_info(`conversations`)")
+            .use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                while (cursor.moveToNext()) {
+                    columns += cursor.getString(nameIndex)
+                }
+            }
+
+        assertFalse(columns.contains("title"))
+
+        val repository = RoomConversationRepository(database)
+        val conversations = repository.observeConversations().first()
+        val bundle = repository.observeConversationWithMessages(1L).first()
+
+        assertEquals(1, conversations.size)
+        assertEquals("旧角色", conversations.single().characterSnapshot?.effectiveName())
+        assertEquals("迁移前的草稿", conversations.single().draft)
+        assertEquals("旧消息", bundle?.messages?.single()?.content)
+    }
+
     private fun inMemoryDatabase(): AppDatabase {
         val database = Room.inMemoryDatabaseBuilder(
             context,
@@ -141,9 +179,122 @@ class RoomConversationRepositoryTest {
             context,
             AppDatabase::class.java,
             TEST_DATABASE_NAME
-        ).allowMainThreadQueries().build()
+        )
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .allowMainThreadQueries()
+            .build()
         databases += database
         return database
+    }
+
+    private fun seedVersion2Database() {
+        val databaseFile = context.getDatabasePath(TEST_DATABASE_NAME)
+        databaseFile.parentFile?.mkdirs()
+        val database = SQLiteDatabase.openOrCreateDatabase(databaseFile, null)
+        try {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `character_cards` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `personality` TEXT NOT NULL,
+                    `scenario` TEXT NOT NULL,
+                    `firstMes` TEXT NOT NULL,
+                    `mesExample` TEXT NOT NULL,
+                    `systemPrompt` TEXT NOT NULL,
+                    `postHistoryInstructions` TEXT NOT NULL,
+                    `alternateGreetingsSerialized` TEXT NOT NULL,
+                    `creatorNotes` TEXT NOT NULL,
+                    `tagsSerialized` TEXT NOT NULL,
+                    `creator` TEXT NOT NULL,
+                    `characterVersion` TEXT NOT NULL,
+                    `rawExtensionsJson` TEXT NOT NULL,
+                    `rawUnknownJson` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `conversations` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `characterCardId` INTEGER,
+                    `characterSnapshotJson` TEXT,
+                    `draft` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `conversation_messages` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `conversationId` INTEGER NOT NULL,
+                    `role` TEXT NOT NULL,
+                    `content` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    FOREIGN KEY(`conversationId`) REFERENCES `conversations`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_character_cards_updatedAt` ON `character_cards` (`updatedAt`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_conversations_updatedAt` ON `conversations` (`updatedAt`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_conversations_characterCardId` ON `conversations` (`characterCardId`)"
+            )
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_conversation_messages_conversationId` ON `conversation_messages` (`conversationId`)"
+            )
+            database.execSQL(
+                """
+                INSERT INTO `conversations` (
+                    `id`,
+                    `title`,
+                    `characterCardId`,
+                    `characterSnapshotJson`,
+                    `draft`,
+                    `createdAt`,
+                    `updatedAt`
+                ) VALUES (
+                    1,
+                    '旧标题',
+                    NULL,
+                    '{"name":"旧角色"}',
+                    '迁移前的草稿',
+                    100,
+                    200
+                )
+                """.trimIndent()
+            )
+            database.execSQL(
+                """
+                INSERT INTO `conversation_messages` (
+                    `id`,
+                    `conversationId`,
+                    `role`,
+                    `content`,
+                    `createdAt`
+                ) VALUES (
+                    1,
+                    1,
+                    'assistant',
+                    '旧消息',
+                    201
+                )
+                """.trimIndent()
+            )
+            database.version = 2
+        } finally {
+            database.close()
+        }
     }
 
     private companion object {

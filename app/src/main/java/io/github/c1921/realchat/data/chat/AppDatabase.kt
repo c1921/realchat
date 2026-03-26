@@ -53,7 +53,6 @@ data class CharacterCardEntity(
 data class ConversationEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0L,
-    val title: String,
     val characterCardId: Long?,
     val characterSnapshotJson: String?,
     val draft: String,
@@ -181,7 +180,7 @@ interface ConversationMessageDao {
         ConversationEntity::class,
         ConversationMessageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -312,6 +311,55 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("PRAGMA foreign_keys=OFF")
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `conversations_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `characterCardId` INTEGER,
+                        `characterSnapshotJson` TEXT,
+                        `draft` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    """
+                    INSERT INTO `conversations_new` (
+                        `id`,
+                        `characterCardId`,
+                        `characterSnapshotJson`,
+                        `draft`,
+                        `createdAt`,
+                        `updatedAt`
+                    )
+                    SELECT
+                        `id`,
+                        `characterCardId`,
+                        `characterSnapshotJson`,
+                        `draft`,
+                        `createdAt`,
+                        `updatedAt`
+                    FROM `conversations`
+                    """.trimIndent()
+                )
+                database.execSQL("DROP TABLE `conversations`")
+                database.execSQL("ALTER TABLE `conversations_new` RENAME TO `conversations`")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_conversations_updatedAt` ON `conversations` (`updatedAt`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_conversations_characterCardId` ON `conversations` (`characterCardId`)"
+                )
+                database.execSQL("PRAGMA foreign_keys=ON")
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -319,7 +367,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(*MIGRATIONS)
                     .build()
                     .also { database ->
                         instance = database

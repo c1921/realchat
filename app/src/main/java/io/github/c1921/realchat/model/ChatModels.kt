@@ -218,21 +218,12 @@ data class CharacterCard(
 
 data class Conversation(
     val id: Long = 0L,
-    val title: String = "",
     val characterCardId: Long? = null,
     val characterSnapshot: CharacterCardSnapshot? = null,
     val draft: String = "",
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L
-) {
-    fun effectiveTitle(): String {
-        return title.ifBlank { characterSnapshot?.effectiveName().orEmpty().ifBlank { DEFAULT_TITLE } }
-    }
-
-    companion object {
-        const val DEFAULT_TITLE = "新对话"
-    }
-}
+)
 
 data class ConversationListItem(
     val conversation: Conversation,

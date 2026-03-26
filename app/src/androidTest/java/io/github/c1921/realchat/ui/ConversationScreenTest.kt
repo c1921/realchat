@@ -48,13 +48,8 @@ class ConversationScreenTest {
                     onOpenConversationDetail = { },
                     onShowCreateConversationDialog = { },
                     onDismissCreateConversationDialog = { },
-                    onPendingConversationTitleChange = { },
                     onPendingConversationCardIdChange = { },
                     onCreateConversation = { },
-                    onShowRenameConversationDialog = { },
-                    onDismissRenameConversationDialog = { },
-                    onPendingRenameTitleChange = { },
-                    onRenameSelectedConversation = { },
                     onDeleteSelectedConversation = { }
                 )
             }
@@ -62,17 +57,15 @@ class ConversationScreenTest {
 
         composeRule.onNodeWithTag("conversation_list").assertExists()
         composeRule.onNodeWithTag("conversation_row_1").assertExists()
-        composeRule.onNodeWithText("夜聊").assertExists()
+        composeRule.onNodeWithText("小雨").assertExists()
         composeRule.onNodeWithText("角色：你好呀").assertExists()
         composeRule.onNodeWithContentDescription("新建会话").assertExists()
-        composeRule.onNodeWithContentDescription("重命名会话").assertExists()
         composeRule.onNodeWithContentDescription("删除会话").assertExists()
     }
 
     private fun sampleConversationState(draft: String = ""): ConversationUiState {
         val conversation = Conversation(
             id = 1L,
-            title = "夜聊",
             characterSnapshot = CharacterCardSnapshot(name = "小雨")
         )
         return ConversationUiState(

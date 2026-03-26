@@ -2,19 +2,22 @@
 
 package io.github.c1921.realchat.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,7 +36,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,7 +44,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -92,13 +93,8 @@ fun ConversationHomeScreen(
     onOpenConversationDetail: (Long) -> Unit,
     onShowCreateConversationDialog: () -> Unit,
     onDismissCreateConversationDialog: () -> Unit,
-    onPendingConversationTitleChange: (String) -> Unit,
     onPendingConversationCardIdChange: (Long) -> Unit,
     onCreateConversation: () -> Unit,
-    onShowRenameConversationDialog: () -> Unit,
-    onDismissRenameConversationDialog: () -> Unit,
-    onPendingRenameTitleChange: (String) -> Unit,
-    onRenameSelectedConversation: () -> Unit,
     onDeleteSelectedConversation: () -> Unit
 ) {
     Scaffold(
@@ -115,12 +111,6 @@ fun ConversationHomeScreen(
                         )
                     }
                     if (conversation.selectedConversationId != null) {
-                        IconButton(onClick = onShowRenameConversationDialog) {
-                            Icon(
-                                imageVector = Icons.Filled.Edit,
-                                contentDescription = "重命名会话"
-                            )
-                        }
                         IconButton(onClick = onDeleteSelectedConversation) {
                             Icon(
                                 imageVector = Icons.Filled.Delete,
@@ -155,20 +145,9 @@ fun ConversationHomeScreen(
         CreateConversationDialog(
             cards = cards,
             selectedCardId = conversation.pendingCharacterCardId,
-            title = conversation.pendingConversationTitle,
             onDismiss = onDismissCreateConversationDialog,
-            onTitleChange = onPendingConversationTitleChange,
             onSelectCard = onPendingConversationCardIdChange,
             onConfirm = onCreateConversation
-        )
-    }
-
-    if (conversation.showRenameDialog) {
-        RenameConversationDialog(
-            title = conversation.pendingRenameTitle,
-            onDismiss = onDismissRenameConversationDialog,
-            onTitleChange = onPendingRenameTitleChange,
-            onConfirm = onRenameSelectedConversation
         )
     }
 }
@@ -284,8 +263,8 @@ private fun ConversationList(
         modifier = modifier
             .fillMaxWidth()
             .testTag(CONVERSATION_LIST_TAG),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(top = 4.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         itemsIndexed(
             items = conversation.conversationItems,
@@ -309,65 +288,66 @@ private fun ConversationListRow(
     val roleName = item.conversation.characterSnapshot?.effectiveName()
         .orEmpty()
         .ifBlank { "未绑定角色" }
+    val timestamp = formatConversationTimestamp(item.conversation.updatedAt)
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("conversation_row_${item.conversation.id}")
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         color = if (selected) {
-            MaterialTheme.colorScheme.primaryContainer
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
         } else {
-            MaterialTheme.colorScheme.surface
+            Color.Transparent
         },
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (selected) {
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-            } else {
-                MaterialTheme.colorScheme.outlineVariant
-            }
-        ),
-        tonalElevation = if (selected) 2.dp else 0.dp
+        tonalElevation = 0.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .height(IntrinsicSize.Min)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ConversationAvatar(
-                label = avatarLabel(roleName),
-                containerColor = if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.secondaryContainer
-                },
-                contentColor = if (selected) {
-                    MaterialTheme.colorScheme.onPrimary
-                } else {
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                }
-            )
+            Box(
+                modifier = Modifier.fillMaxHeight(),
+                contentAlignment = Alignment.Center
+            ) {
+                ConversationAvatar(
+                    label = avatarLabel(roleName),
+                    containerColor = if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    },
+                    contentColor = if (selected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSecondaryContainer
+                    }
+                )
+            }
 
             Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top
                 ) {
                     Text(
-                        text = item.conversation.effectiveTitle(),
+                        text = roleName,
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    val timestamp = formatConversationTimestamp(item.conversation.updatedAt)
                     if (timestamp.isNotBlank()) {
                         Text(
                             text = timestamp,
@@ -378,17 +358,10 @@ private fun ConversationListRow(
                     }
                 }
                 Text(
-                    text = roleName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
                     text = item.summaryText(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
@@ -524,6 +497,7 @@ private fun ChatComposer(
     onSendMessage: () -> Unit
 ) {
     Surface(
+        modifier = Modifier.imePadding(),
         tonalElevation = 3.dp,
         shadowElevation = 4.dp
     ) {
@@ -551,7 +525,11 @@ private fun ChatComposer(
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent,
+                        errorIndicatorColor = Color.Transparent
                     )
                 )
 
@@ -639,9 +617,7 @@ private data class ConversationNotice(
 private fun CreateConversationDialog(
     cards: List<CharacterCard>,
     selectedCardId: Long?,
-    title: String,
     onDismiss: () -> Unit,
-    onTitleChange: (String) -> Unit,
     onSelectCard: (Long) -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -655,13 +631,6 @@ private fun CreateConversationDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = onTitleChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("会话标题，可留空") },
-                    shape = RoundedCornerShape(18.dp)
-                )
                 cards.forEach { card ->
                     val selected = selectedCardId == card.id
                     Surface(
@@ -674,14 +643,7 @@ private fun CreateConversationDialog(
                         } else {
                             MaterialTheme.colorScheme.surface
                         },
-                        border = BorderStroke(
-                            width = 1.dp,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
-                            } else {
-                                MaterialTheme.colorScheme.outlineVariant
-                            }
-                        )
+                        tonalElevation = if (selected) 1.dp else 0.dp
                     ) {
                         Row(
                             modifier = Modifier
@@ -727,38 +689,6 @@ private fun CreateConversationDialog(
                 enabled = cards.isNotEmpty() && selectedCardId != null
             ) {
                 Text("创建")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
-}
-
-@Composable
-private fun RenameConversationDialog(
-    title: String,
-    onDismiss: () -> Unit,
-    onTitleChange: (String) -> Unit,
-    onConfirm: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("重命名会话") },
-        text = {
-            OutlinedTextField(
-                value = title,
-                onValueChange = onTitleChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("标题") },
-                shape = RoundedCornerShape(18.dp)
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("保存")
             }
         },
         dismissButton = {

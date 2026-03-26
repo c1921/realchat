@@ -72,10 +72,7 @@ data class ConversationUiState(
     val statusText: String? = null,
     val hasValidConfig: Boolean = false,
     val showCreateDialog: Boolean = false,
-    val pendingConversationTitle: String = "",
-    val pendingCharacterCardId: Long? = null,
-    val showRenameDialog: Boolean = false,
-    val pendingRenameTitle: String = ""
+    val pendingCharacterCardId: Long? = null
 ) {
     fun selectedConversation(): Conversation? {
         return conversationItems.firstOrNull { it.conversation.id == selectedConversationId }
@@ -218,7 +215,6 @@ class ChatViewModel(
             current.copy(
                 conversation = current.conversation.copy(
                     showCreateDialog = true,
-                    pendingConversationTitle = "",
                     pendingCharacterCardId = current.conversation.pendingCharacterCardId
                         ?: availableCards.firstOrNull()?.id
                 )
@@ -230,18 +226,7 @@ class ChatViewModel(
         _uiState.update { current ->
             current.copy(
                 conversation = current.conversation.copy(
-                    showCreateDialog = false,
-                    pendingConversationTitle = ""
-                )
-            )
-        }
-    }
-
-    fun updatePendingConversationTitle(title: String) {
-        _uiState.update { current ->
-            current.copy(
-                conversation = current.conversation.copy(
-                    pendingConversationTitle = title
+                    showCreateDialog = false
                 )
             )
         }
@@ -276,16 +261,12 @@ class ChatViewModel(
 
         viewModelScope.launch {
             runCatching {
-                conversationRepository.createConversation(
-                    characterCard = selectedCard,
-                    title = state.conversation.pendingConversationTitle
-                )
+                conversationRepository.createConversation(characterCard = selectedCard)
             }.onSuccess { conversationId ->
                 _uiState.update { current ->
                     current.copy(
                         conversation = current.conversation.copy(
                             showCreateDialog = false,
-                            pendingConversationTitle = "",
                             errorText = null,
                             statusText = "已创建新会话。"
                         )
@@ -306,69 +287,6 @@ class ChatViewModel(
 
     fun selectConversation(conversationId: Long) {
         selectConversationInternal(conversationId, persistSelection = true)
-    }
-
-    fun showRenameConversationDialog() {
-        val selectedConversation = uiState.value.conversation.selectedConversation() ?: return
-        _uiState.update { current ->
-            current.copy(
-                conversation = current.conversation.copy(
-                    showRenameDialog = true,
-                    pendingRenameTitle = selectedConversation.effectiveTitle(),
-                    errorText = null
-                )
-            )
-        }
-    }
-
-    fun dismissRenameConversationDialog() {
-        _uiState.update { current ->
-            current.copy(
-                conversation = current.conversation.copy(
-                    showRenameDialog = false,
-                    pendingRenameTitle = ""
-                )
-            )
-        }
-    }
-
-    fun updatePendingRenameTitle(title: String) {
-        _uiState.update { current ->
-            current.copy(
-                conversation = current.conversation.copy(
-                    pendingRenameTitle = title
-                )
-            )
-        }
-    }
-
-    fun renameSelectedConversation() {
-        val conversationId = uiState.value.conversation.selectedConversationId ?: return
-        val title = uiState.value.conversation.pendingRenameTitle
-        viewModelScope.launch {
-            runCatching {
-                conversationRepository.renameConversation(conversationId, title)
-            }.onSuccess {
-                _uiState.update { current ->
-                    current.copy(
-                        conversation = current.conversation.copy(
-                            showRenameDialog = false,
-                            pendingRenameTitle = "",
-                            errorText = null,
-                            statusText = "会话标题已更新。"
-                        )
-                    )
-                }
-            }.onFailure { throwable ->
-                _uiState.update { current ->
-                    current.copy(
-                        conversation = current.conversation.copy(
-                            errorText = throwable.message ?: "重命名会话失败。"
-                        )
-                    )
-                }
-            }
-        }
     }
 
     fun deleteSelectedConversation() {

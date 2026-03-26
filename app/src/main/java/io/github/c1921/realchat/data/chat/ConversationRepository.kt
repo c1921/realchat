@@ -24,8 +24,7 @@ interface ConversationRepository {
     suspend fun getConversationById(conversationId: Long): Conversation?
 
     suspend fun createConversation(
-        characterCard: CharacterCard,
-        title: String = ""
+        characterCard: CharacterCard
     ): Long
 
     suspend fun updateDraft(conversationId: Long, draft: String)
@@ -35,8 +34,6 @@ interface ConversationRepository {
         userContent: String,
         assistantMessage: ChatMessage
     )
-
-    suspend fun renameConversation(conversationId: Long, title: String)
 
     suspend fun deleteConversation(conversationId: Long)
 
@@ -95,15 +92,13 @@ class RoomConversationRepository(
     }
 
     override suspend fun createConversation(
-        characterCard: CharacterCard,
-        title: String
+        characterCard: CharacterCard
     ): Long {
         val snapshot = characterCard.toSnapshot().normalized()
         val now = System.currentTimeMillis()
         return database.withTransaction {
             val conversationId = conversationDao.insert(
                 ConversationEntity(
-                    title = title.trim().ifBlank { snapshot.effectiveName() },
                     characterCardId = characterCard.id.takeIf { it != 0L },
                     characterSnapshotJson = json.encodeToString(snapshot),
                     draft = "",
@@ -170,16 +165,6 @@ class RoomConversationRepository(
         }
     }
 
-    override suspend fun renameConversation(conversationId: Long, title: String) {
-        val existing = conversationDao.getById(conversationId) ?: return
-        conversationDao.update(
-            existing.copy(
-                title = title.trim().ifBlank { existing.title },
-                updatedAt = System.currentTimeMillis()
-            )
-        )
-    }
-
     override suspend fun deleteConversation(conversationId: Long) {
         val existing = conversationDao.getById(conversationId) ?: return
         conversationDao.delete(existing)
@@ -195,7 +180,6 @@ class RoomConversationRepository(
     private fun ConversationEntity.toDomain(): Conversation {
         return Conversation(
             id = id,
-            title = title,
             characterCardId = characterCardId,
             characterSnapshot = characterSnapshotJson
                 ?.takeIf(String::isNotBlank)

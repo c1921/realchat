@@ -55,7 +55,6 @@ class ChatViewModelTest {
         val bundle = ConversationWithMessages(
             conversation = Conversation(
                 id = 10L,
-                title = "Alice",
                 characterCardId = card.id,
                 characterSnapshot = card.toSnapshot(),
                 updatedAt = 100L
@@ -94,7 +93,6 @@ class ChatViewModelTest {
         val bundle = ConversationWithMessages(
             conversation = Conversation(
                 id = 10L,
-                title = "Alice",
                 characterCardId = card.id,
                 characterSnapshot = card.toSnapshot(),
                 updatedAt = 100L
@@ -121,6 +119,38 @@ class ChatViewModelTest {
         assertNull(state.secondaryScreen)
         assertEquals(10L, state.conversation.selectedConversationId)
         assertEquals("你好", state.conversation.messages.single().content)
+    }
+
+    @Test
+    fun createConversation_createsConversationForSelectedCard() = runTest {
+        val firstCard = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val secondCard = CharacterCard(
+            id = 2L,
+            name = "Bob",
+            firstMes = "第二位角色已就绪。"
+        )
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = FakeAppPreferencesRepository(),
+            characterCardRepository = FakeCharacterCardRepository(listOf(firstCard, secondCard)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer()
+        )
+
+        advanceUntilIdle()
+        viewModel.showCreateConversationDialog()
+        viewModel.updatePendingConversationCardId(secondCard.id)
+        viewModel.createConversation()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(2, state.conversation.conversationItems.size)
+        assertEquals(2L, state.conversation.selectedConversationId)
+        assertEquals("Bob", state.conversation.selectedConversation()?.characterSnapshot?.effectiveName())
+        assertEquals("已创建新会话。", state.conversation.statusText)
     }
 
     @Test
@@ -316,14 +346,10 @@ private class FakeConversationRepository(
         return bundles.value.firstOrNull { it.conversation.id == conversationId }?.conversation
     }
 
-    override suspend fun createConversation(
-        characterCard: CharacterCard,
-        title: String
-    ): Long {
+    override suspend fun createConversation(characterCard: CharacterCard): Long {
         val nextId = (bundles.value.maxOfOrNull { it.conversation.id } ?: 0L) + 1L
         val conversation = Conversation(
             id = nextId,
-            title = title.ifBlank { characterCard.toSnapshot().effectiveName() },
             characterCardId = characterCard.id,
             characterSnapshot = characterCard.toSnapshot(),
             updatedAt = nextId
@@ -364,18 +390,6 @@ private class FakeConversationRepository(
                         ),
                         messages = bundle.messages + ChatMessage(ChatRole.User, userContent) + assistantMessage
                     )
-                } else {
-                    bundle
-                }
-            }
-        }
-    }
-
-    override suspend fun renameConversation(conversationId: Long, title: String) {
-        bundles.update { current ->
-            current.map { bundle ->
-                if (bundle.conversation.id == conversationId) {
-                    bundle.copy(conversation = bundle.conversation.copy(title = title))
                 } else {
                     bundle
                 }

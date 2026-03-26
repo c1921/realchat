@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -13,7 +16,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import io.github.c1921.realchat.model.ProviderType
 
 @Composable
@@ -26,13 +31,8 @@ fun RealChatApp(
     onSendMessage: () -> Unit,
     onShowCreateConversationDialog: () -> Unit,
     onDismissCreateConversationDialog: () -> Unit,
-    onPendingConversationTitleChange: (String) -> Unit,
     onPendingConversationCardIdChange: (Long) -> Unit,
     onCreateConversation: () -> Unit,
-    onShowRenameConversationDialog: () -> Unit,
-    onDismissRenameConversationDialog: () -> Unit,
-    onPendingRenameTitleChange: (String) -> Unit,
-    onRenameSelectedConversation: () -> Unit,
     onDeleteSelectedConversation: () -> Unit,
     onOpenCreateCharacterEditor: () -> Unit,
     onOpenEditCharacterEditor: (Long) -> Unit,
@@ -117,10 +117,18 @@ fun RealChatApp(
             }
         }
     ) { innerPadding ->
+        val layoutDirection = LocalLayoutDirection.current
+        val conversationScreenPadding = PaddingValues(
+            start = innerPadding.calculateStartPadding(layoutDirection),
+            top = 0.dp,
+            end = innerPadding.calculateEndPadding(layoutDirection),
+            bottom = innerPadding.calculateBottomPadding()
+        )
+
         when {
             chatDetailScreen != null -> ChatDetailScreen(
                 conversation = uiState.conversation,
-                modifier = Modifier.padding(innerPadding),
+                modifier = Modifier.padding(conversationScreenPadding),
                 onBack = onCloseSecondaryScreen,
                 onDraftChange = onDraftChange,
                 onSendMessage = onSendMessage
@@ -129,17 +137,12 @@ fun RealChatApp(
             uiState.currentScreen == AppScreen.Conversations -> ConversationHomeScreen(
                 conversation = uiState.conversation,
                 cards = uiState.characters.cards,
-                modifier = Modifier.padding(innerPadding),
+                modifier = Modifier.padding(conversationScreenPadding),
                 onOpenConversationDetail = onOpenConversationDetail,
                 onShowCreateConversationDialog = onShowCreateConversationDialog,
                 onDismissCreateConversationDialog = onDismissCreateConversationDialog,
-                onPendingConversationTitleChange = onPendingConversationTitleChange,
                 onPendingConversationCardIdChange = onPendingConversationCardIdChange,
                 onCreateConversation = onCreateConversation,
-                onShowRenameConversationDialog = onShowRenameConversationDialog,
-                onDismissRenameConversationDialog = onDismissRenameConversationDialog,
-                onPendingRenameTitleChange = onPendingRenameTitleChange,
-                onRenameSelectedConversation = onRenameSelectedConversation,
                 onDeleteSelectedConversation = onDeleteSelectedConversation
             )
 
