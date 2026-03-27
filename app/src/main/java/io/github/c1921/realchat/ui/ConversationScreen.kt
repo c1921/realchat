@@ -262,7 +262,7 @@ fun ChatDetailScreen(
 
                 else -> {
                     MessageList(
-                        messages = conversation.messages,
+                        messages = conversation.messages + listOfNotNull(conversation.optimisticUserMessage),
                         state = messageListState,
                         developerModeEnabled = settings.developerModeEnabled,
                         directorGuidanceHints = conversation.directorGuidanceHints,

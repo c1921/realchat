@@ -89,7 +89,8 @@ data class ConversationUiState(
     val showCreateDialog: Boolean = false,
     val pendingCharacterCardId: Long? = null,
     val emotionState: EmotionState = EmotionState(),
-    val directorGuidanceHints: Map<Int, String> = emptyMap()
+    val directorGuidanceHints: Map<Int, String> = emptyMap(),
+    val optimisticUserMessage: ChatMessage? = null
 ) {
     fun selectedConversation(): Conversation? {
         return conversationItems.firstOrNull { it.conversation.id == selectedConversationId }
@@ -929,14 +930,28 @@ class ChatViewModel(
             activeBundle.messages
         }
 
-        _uiState.update { current ->
-            current.copy(
-                conversation = current.conversation.copy(
-                    isSending = true,
-                    errorText = null,
-                    statusText = null
+        if (userContent != null) {
+            _uiState.update { current ->
+                current.copy(
+                    conversation = current.conversation.copy(
+                        optimisticUserMessage = ChatMessage(role = ChatRole.User, content = userContent),
+                        draft = "",
+                        isSending = true,
+                        errorText = null,
+                        statusText = null
+                    )
                 )
-            )
+            }
+        } else {
+            _uiState.update { current ->
+                current.copy(
+                    conversation = current.conversation.copy(
+                        isSending = true,
+                        errorText = null,
+                        statusText = null
+                    )
+                )
+            }
         }
 
         checkAndSummarizeIfNeeded(
@@ -1014,6 +1029,7 @@ class ChatViewModel(
                         current.copy(
                             conversation = current.conversation.copy(
                                 isSending = false,
+                                optimisticUserMessage = null,
                                 errorText = null,
                                 directorGuidanceHints = updatedHints
                             )
@@ -1030,6 +1046,8 @@ class ChatViewModel(
                         current.copy(
                             conversation = current.conversation.copy(
                                 isSending = false,
+                                optimisticUserMessage = null,
+                                draft = userContent ?: current.conversation.draft,
                                 errorText = throwable.message ?: "保存聊天记录失败。"
                             )
                         )
@@ -1043,6 +1061,8 @@ class ChatViewModel(
                             isSending = false,
                             isDirectorAnalyzing = false,
                             statusText = null,
+                            optimisticUserMessage = null,
+                            draft = userContent ?: current.conversation.draft,
                             errorText = throwable.message ?: "请求失败。"
                         )
                     )
@@ -1273,7 +1293,8 @@ class ChatViewModel(
                     draft = "",
                     isSending = false,
                     emotionState = EmotionState(),
-                    directorGuidanceHints = emptyMap()
+                    directorGuidanceHints = emptyMap(),
+                    optimisticUserMessage = null
                 )
             )
         }
