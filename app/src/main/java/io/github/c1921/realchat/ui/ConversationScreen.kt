@@ -51,14 +51,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import io.github.c1921.realchat.data.agent.OpenAiCompatibleDirectorService
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -239,8 +237,6 @@ fun ChatDetailScreen(
             if (settings.developerModeEnabled) {
                 DevDebugPanel(
                     proactiveEnabled = settings.proactiveEnabled,
-                    directorEnabled = settings.directorEnabled,
-                    directorSystemPrompt = settings.directorSystemPrompt,
                     onGetNextTriggerMs = onGetProactiveNextTriggerMs
                 )
             }
@@ -268,6 +264,8 @@ fun ChatDetailScreen(
                     MessageList(
                         messages = conversation.messages,
                         state = messageListState,
+                        developerModeEnabled = settings.developerModeEnabled,
+                        directorGuidanceHints = conversation.directorGuidanceHints,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -416,6 +414,8 @@ private fun ChatHeaderTitle(
 private fun MessageList(
     messages: List<ChatMessage>,
     state: LazyListState,
+    developerModeEnabled: Boolean = false,
+    directorGuidanceHints: Map<Int, String> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -433,11 +433,24 @@ private fun MessageList(
                 ChatRole.User, ChatRole.Assistant -> {
                     val previousRole = messages.getOrNull(index - 1)?.role
                     val nextRole = messages.getOrNull(index + 1)?.role
-                    MessageBubble(
-                        message = message,
-                        isGroupedWithPrevious = previousRole == message.role,
-                        isGroupedWithNext = nextRole == message.role
-                    )
+                    val guidanceText = if (developerModeEnabled && message.role == ChatRole.Assistant) {
+                        directorGuidanceHints[index]
+                    } else null
+                    Column {
+                        if (guidanceText != null) {
+                            Text(
+                                text = guidanceText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
+                            )
+                        }
+                        MessageBubble(
+                            message = message,
+                            isGroupedWithPrevious = previousRole == message.role,
+                            isGroupedWithNext = nextRole == message.role
+                        )
+                    }
                 }
             }
         }
@@ -866,11 +879,8 @@ internal fun SupportText(
 @Composable
 private fun DevDebugPanel(
     proactiveEnabled: Boolean,
-    directorEnabled: Boolean,
-    directorSystemPrompt: String,
     onGetNextTriggerMs: () -> Long
 ) {
-    var directorExpanded by remember { mutableStateOf(false) }
     var countdownText by remember { mutableStateOf("") }
 
     if (proactiveEnabled) {
@@ -890,12 +900,7 @@ private fun DevDebugPanel(
         }
     }
 
-    val effectivePrompt = if (directorEnabled) {
-        directorSystemPrompt.takeUnless { it.isBlank() }
-            ?: OpenAiCompatibleDirectorService.DEFAULT_DIRECTOR_SYSTEM_PROMPT
-    } else null
-
-    if (!proactiveEnabled && effectivePrompt == null) return
+    if (!proactiveEnabled) return
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -907,35 +912,12 @@ private fun DevDebugPanel(
                 .padding(horizontal = 14.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            if (proactiveEnabled && countdownText.isNotEmpty()) {
+            if (countdownText.isNotEmpty()) {
                 Text(
                     text = countdownText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )
-            }
-            if (effectivePrompt != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { directorExpanded = !directorExpanded },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "导演提示词 ${if (directorExpanded) "▲" else "▼"}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
-                AnimatedVisibility(visible = directorExpanded) {
-                    Text(
-                        text = effectivePrompt,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
             }
         }
     }

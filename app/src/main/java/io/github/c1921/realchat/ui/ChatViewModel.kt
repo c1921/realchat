@@ -35,6 +35,7 @@ import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
+import io.github.c1921.realchat.model.DirectorGuidance
 import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
@@ -87,7 +88,8 @@ data class ConversationUiState(
     val hasValidConfig: Boolean = false,
     val showCreateDialog: Boolean = false,
     val pendingCharacterCardId: Long? = null,
-    val emotionState: EmotionState = EmotionState()
+    val emotionState: EmotionState = EmotionState(),
+    val directorGuidanceHints: Map<Int, String> = emptyMap()
 ) {
     fun selectedConversation(): Conversation? {
         return conversationItems.firstOrNull { it.conversation.id == selectedConversationId }
@@ -1001,11 +1003,19 @@ class ChatViewModel(
                     }
                 }.onSuccess {
                     proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
+                    val guidanceText = guidance?.let { formatDirectorGuidance(it) }
+                    val assistantIndex = historyMessages.size
                     _uiState.update { current ->
+                        val updatedHints = if (guidanceText != null) {
+                            current.conversation.directorGuidanceHints + (assistantIndex to guidanceText)
+                        } else {
+                            current.conversation.directorGuidanceHints
+                        }
                         current.copy(
                             conversation = current.conversation.copy(
                                 isSending = false,
-                                errorText = null
+                                errorText = null,
+                                directorGuidanceHints = updatedHints
                             )
                         )
                     }
@@ -1262,7 +1272,8 @@ class ChatViewModel(
                     messages = emptyList(),
                     draft = "",
                     isSending = false,
-                    emotionState = EmotionState()
+                    emotionState = EmotionState(),
+                    directorGuidanceHints = emptyMap()
                 )
             )
         }
@@ -1336,6 +1347,16 @@ class ChatViewModel(
             CharacterEditorField.CharacterVersion -> copy(characterVersion = value)
             CharacterEditorField.AlternateGreetings -> copy(alternateGreetingsText = value)
         }
+    }
+
+    private fun formatDirectorGuidance(guidance: DirectorGuidance): String? {
+        val parts = buildList {
+            if (guidance.mood.isNotBlank()) add("氛围：${guidance.mood}")
+            if (guidance.topicDirection.isNotBlank()) add("话题方向：${guidance.topicDirection}")
+            if (guidance.pursue.isNotBlank()) add("推进：${guidance.pursue}")
+            if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
+        }
+        return if (parts.isEmpty()) null else "导演指示：${parts.joinToString("，")}"
     }
 
     private fun CharacterCardEditorState.toCharacterCard(): CharacterCard {

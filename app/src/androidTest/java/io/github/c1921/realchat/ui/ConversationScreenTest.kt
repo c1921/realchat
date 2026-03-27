@@ -21,6 +21,8 @@ class ConversationScreenTest {
             MaterialTheme {
                 ChatDetailScreen(
                     conversation = sampleConversationState(draft = "在吗"),
+                    settings = SettingsUiState(),
+                    onGetProactiveNextTriggerMs = { 0L },
                     onBack = { },
                     onDraftChange = { },
                     onSendMessage = { }

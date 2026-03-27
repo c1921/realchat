@@ -29,6 +29,15 @@ class SettingsScreenTest {
                     onBaseUrlChange = { },
                     onPersonaNameChange = { },
                     onPersonaDescriptionChange = { },
+                    onProactiveEnabledChange = { },
+                    onProactiveMinIntervalChange = { },
+                    onProactiveMaxIntervalChange = { },
+                    onDirectorEnabledChange = { },
+                    onDirectorSystemPromptChange = { },
+                    onMemoryEnabledChange = { },
+                    onMemoryTriggerCountChange = { },
+                    onMemoryKeepCountChange = { },
+                    onDeveloperModeEnabledChange = { },
                     onSaveSettings = { }
                 )
             }
