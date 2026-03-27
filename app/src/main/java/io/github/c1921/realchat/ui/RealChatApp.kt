@@ -52,6 +52,16 @@ fun RealChatApp(
     onBaseUrlChange: (String) -> Unit,
     onPersonaNameChange: (String) -> Unit,
     onPersonaDescriptionChange: (String) -> Unit,
+    onProactiveEnabledChange: (Boolean) -> Unit,
+    onProactiveMinIntervalChange: (String) -> Unit,
+    onProactiveMaxIntervalChange: (String) -> Unit,
+    onDirectorEnabledChange: (Boolean) -> Unit,
+    onDirectorSystemPromptChange: (String) -> Unit,
+    onMemoryEnabledChange: (Boolean) -> Unit,
+    onMemoryTriggerCountChange: (String) -> Unit,
+    onMemoryKeepCountChange: (String) -> Unit,
+    onDeveloperModeEnabledChange: (Boolean) -> Unit,
+    onGetProactiveNextTriggerMs: () -> Long,
     onSaveSettings: () -> Unit
 ) {
     val chatDetailScreen = uiState.secondaryScreen as? SecondaryScreen.ChatDetail
@@ -128,6 +138,8 @@ fun RealChatApp(
         when {
             chatDetailScreen != null -> ChatDetailScreen(
                 conversation = uiState.conversation,
+                settings = uiState.settings,
+                onGetProactiveNextTriggerMs = onGetProactiveNextTriggerMs,
                 modifier = Modifier.padding(conversationScreenPadding),
                 onBack = onCloseSecondaryScreen,
                 onDraftChange = onDraftChange,
@@ -171,6 +183,15 @@ fun RealChatApp(
                 onBaseUrlChange = onBaseUrlChange,
                 onPersonaNameChange = onPersonaNameChange,
                 onPersonaDescriptionChange = onPersonaDescriptionChange,
+                onProactiveEnabledChange = onProactiveEnabledChange,
+                onProactiveMinIntervalChange = onProactiveMinIntervalChange,
+                onProactiveMaxIntervalChange = onProactiveMaxIntervalChange,
+                onDirectorEnabledChange = onDirectorEnabledChange,
+                onDirectorSystemPromptChange = onDirectorSystemPromptChange,
+                onMemoryEnabledChange = onMemoryEnabledChange,
+                onMemoryTriggerCountChange = onMemoryTriggerCountChange,
+                onMemoryKeepCountChange = onMemoryKeepCountChange,
+                onDeveloperModeEnabledChange = onDeveloperModeEnabledChange,
                 onSaveSettings = onSaveSettings
             )
         }

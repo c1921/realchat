@@ -1,5 +1,8 @@
 package io.github.c1921.realchat.ui
 
+import io.github.c1921.realchat.data.agent.DirectorService
+import io.github.c1921.realchat.data.agent.EmotionUpdater
+import io.github.c1921.realchat.data.agent.MemorySummarizer
 import io.github.c1921.realchat.data.character.CharacterCardExportPayload
 import io.github.c1921.realchat.data.character.CharacterCardRepository
 import io.github.c1921.realchat.data.chat.ChatProvider
@@ -7,12 +10,16 @@ import io.github.c1921.realchat.data.chat.ConversationRepository
 import io.github.c1921.realchat.data.chat.PromptComposer
 import io.github.c1921.realchat.data.settings.AppPreferences
 import io.github.c1921.realchat.data.settings.AppPreferencesRepository
+import io.github.c1921.realchat.model.AgentSettings
+import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
+import io.github.c1921.realchat.model.DirectorGuidance
+import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 import kotlinx.coroutines.Dispatchers
@@ -69,7 +76,10 @@ class ChatViewModelTest {
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
             conversationRepository = FakeConversationRepository(listOf(bundle)),
             chatProvider = FakeChatProvider(),
-            promptComposer = PromptComposer()
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
         )
 
         advanceUntilIdle()
@@ -106,7 +116,10 @@ class ChatViewModelTest {
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
             conversationRepository = FakeConversationRepository(listOf(bundle)),
             chatProvider = FakeChatProvider(),
-            promptComposer = PromptComposer()
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
         )
 
         advanceUntilIdle()
@@ -137,7 +150,10 @@ class ChatViewModelTest {
             characterCardRepository = FakeCharacterCardRepository(listOf(firstCard, secondCard)),
             conversationRepository = FakeConversationRepository(emptyList()),
             chatProvider = FakeChatProvider(),
-            promptComposer = PromptComposer()
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
         )
 
         advanceUntilIdle()
@@ -165,7 +181,10 @@ class ChatViewModelTest {
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
             conversationRepository = FakeConversationRepository(emptyList()),
             chatProvider = FakeChatProvider(),
-            promptComposer = PromptComposer()
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
         )
 
         advanceUntilIdle()
@@ -204,7 +223,10 @@ class ChatViewModelTest {
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
             conversationRepository = FakeConversationRepository(emptyList()),
             chatProvider = FakeChatProvider(),
-            promptComposer = PromptComposer()
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
         )
 
         advanceUntilIdle()
@@ -271,6 +293,14 @@ private class FakeAppPreferencesRepository(
 
     override suspend fun saveSelectedConversationId(conversationId: Long?) {
         preferences.update { current -> current.copy(selectedConversationId = conversationId) }
+    }
+
+    override suspend fun saveAgentSettings(agentSettings: AgentSettings) {
+        preferences.update { current -> current.copy(agentSettings = agentSettings) }
+    }
+
+    override suspend fun saveDeveloperMode(enabled: Boolean) {
+        preferences.update { current -> current.copy(developerModeEnabled = enabled) }
     }
 }
 
@@ -406,6 +436,55 @@ private class FakeConversationRepository(
     override suspend fun ensureConversationExists(characterCard: CharacterCard): Long {
         return bundles.value.firstOrNull()?.conversation?.id ?: createConversation(characterCard)
     }
+
+    override suspend fun appendProactiveMessage(conversationId: Long, assistantMessage: ChatMessage) {
+        bundles.update { current ->
+            current.map { bundle ->
+                if (bundle.conversation.id == conversationId) {
+                    bundle.copy(
+                        conversation = bundle.conversation.copy(
+                            updatedAt = bundle.conversation.updatedAt + 1L
+                        ),
+                        messages = bundle.messages + assistantMessage
+                    )
+                } else {
+                    bundle
+                }
+            }
+        }
+    }
+
+    override suspend fun updateEmotionState(conversationId: Long, state: EmotionState) {
+        bundles.update { current ->
+            current.map { bundle ->
+                if (bundle.conversation.id == conversationId) {
+                    bundle.copy(conversation = bundle.conversation.copy(emotionState = state))
+                } else {
+                    bundle
+                }
+            }
+        }
+    }
+
+    override suspend fun replaceWithSummary(
+        conversationId: Long,
+        summaryText: String,
+        keepRecentMessages: List<ChatMessage>
+    ) {
+        bundles.update { current ->
+            current.map { bundle ->
+                if (bundle.conversation.id == conversationId) {
+                    val summaryMessage = ChatMessage(ChatRole.System, "[记忆摘要] $summaryText")
+                    bundle.copy(
+                        conversation = bundle.conversation.copy(memorySummary = summaryText),
+                        messages = listOf(summaryMessage) + keepRecentMessages
+                    )
+                } else {
+                    bundle
+                }
+            }
+        }
+    }
 }
 
 private class FakeChatProvider : ChatProvider {
@@ -414,5 +493,53 @@ private class FakeChatProvider : ChatProvider {
         config: ProviderConfig
     ): Result<ChatMessage> {
         return Result.success(ChatMessage(ChatRole.Assistant, "ok"))
+    }
+}
+
+private class FakeDirectorService(
+    private val result: Result<DirectorGuidance> = Result.failure(RuntimeException("director disabled"))
+) : DirectorService {
+    var callCount = 0
+
+    override suspend fun analyze(
+        snapshot: CharacterCardSnapshot?,
+        emotionState: EmotionState,
+        conversationMessages: List<ChatMessage>,
+        config: ProviderConfig
+    ): Result<DirectorGuidance> {
+        callCount++
+        return result
+    }
+
+}
+
+private class FakeEmotionUpdater(
+    private val result: Result<EmotionState> = Result.success(EmotionState(affection = 60, mood = 1))
+) : EmotionUpdater {
+    var callCount = 0
+
+    override suspend fun update(
+        currentState: EmotionState,
+        snapshot: CharacterCardSnapshot?,
+        recentMessages: List<ChatMessage>,
+        config: ProviderConfig
+    ): Result<EmotionState> {
+        callCount++
+        return result
+    }
+}
+
+private class FakeMemorySummarizer(
+    private val result: Result<String> = Result.success("摘要内容")
+) : MemorySummarizer {
+    var callCount = 0
+
+    override suspend fun summarize(
+        messagesToSummarize: List<ChatMessage>,
+        snapshot: CharacterCardSnapshot?,
+        config: ProviderConfig
+    ): Result<String> {
+        callCount++
+        return result
     }
 }

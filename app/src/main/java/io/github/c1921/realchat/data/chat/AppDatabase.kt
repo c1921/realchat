@@ -57,8 +57,14 @@ data class ConversationEntity(
     val characterSnapshotJson: String?,
     val draft: String,
     val createdAt: Long,
-    val updatedAt: Long
-)
+    val updatedAt: Long,
+    val memorySummary: String = "",
+    val emotionStateJson: String = DEFAULT_EMOTION_STATE_JSON
+) {
+    companion object {
+        const val DEFAULT_EMOTION_STATE_JSON = "{\"affection\":50,\"mood\":0}"
+    }
+}
 
 @Entity(
     tableName = "conversation_messages",
@@ -170,8 +176,17 @@ interface ConversationMessageDao {
     @Query("SELECT * FROM conversation_messages WHERE conversationId = :conversationId ORDER BY id ASC")
     fun observeByConversationId(conversationId: Long): Flow<List<ConversationMessageEntity>>
 
+    @Query("SELECT * FROM conversation_messages WHERE conversationId = :conversationId ORDER BY id ASC")
+    suspend fun getByConversationId(conversationId: Long): List<ConversationMessageEntity>
+
     @Insert
     suspend fun insert(message: ConversationMessageEntity): Long
+
+    @Query("DELETE FROM conversation_messages WHERE conversationId = :conversationId AND id NOT IN (:keepIds)")
+    suspend fun deleteExcept(conversationId: Long, keepIds: List<Long>)
+
+    @Query("DELETE FROM conversation_messages WHERE conversationId = :conversationId")
+    suspend fun deleteAll(conversationId: Long)
 }
 
 @Database(
@@ -180,7 +195,7 @@ interface ConversationMessageDao {
         ConversationEntity::class,
         ConversationMessageEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -358,7 +373,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `conversations` ADD COLUMN `memorySummary` TEXT NOT NULL DEFAULT ''"
+                )
+                database.execSQL(
+                    "ALTER TABLE `conversations` ADD COLUMN `emotionStateJson` TEXT NOT NULL DEFAULT '${ConversationEntity.DEFAULT_EMOTION_STATE_JSON}'"
+                )
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
 
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {

@@ -51,8 +51,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import io.github.c1921.realchat.data.agent.OpenAiCompatibleDirectorService
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -155,6 +162,8 @@ fun ConversationHomeScreen(
 @Composable
 fun ChatDetailScreen(
     conversation: ConversationUiState,
+    settings: SettingsUiState,
+    onGetProactiveNextTriggerMs: () -> Long,
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onDraftChange: (String) -> Unit,
@@ -186,7 +195,20 @@ fun ChatDetailScreen(
                     }
                 },
                 title = {
-                    ChatHeaderTitle(roleName = roleName)
+                    Column {
+                        ChatHeaderTitle(roleName = roleName)
+                        val emotion = conversation.emotionState
+                        val moodLabel = when {
+                            emotion.mood > 0 -> "▲${emotion.mood}"
+                            emotion.mood < 0 -> "▼${-emotion.mood}"
+                            else -> "—"
+                        }
+                        Text(
+                            text = "好感度 ${emotion.affection} | 心情 $moodLabel",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             )
         },
@@ -213,6 +235,15 @@ fun ChatDetailScreen(
                 conversation = conversation,
                 invalidConfigText = "请先在设置中保存 API Key、模型和 Base URL。"
             )
+
+            if (settings.developerModeEnabled) {
+                DevDebugPanel(
+                    proactiveEnabled = settings.proactiveEnabled,
+                    directorEnabled = settings.directorEnabled,
+                    directorSystemPrompt = settings.directorSystemPrompt,
+                    onGetNextTriggerMs = onGetProactiveNextTriggerMs
+                )
+            }
 
             when {
                 selectedConversation == null -> {
@@ -830,4 +861,82 @@ internal fun SupportText(
         style = MaterialTheme.typography.bodySmall,
         color = color
     )
+}
+
+@Composable
+private fun DevDebugPanel(
+    proactiveEnabled: Boolean,
+    directorEnabled: Boolean,
+    directorSystemPrompt: String,
+    onGetNextTriggerMs: () -> Long
+) {
+    var directorExpanded by remember { mutableStateOf(false) }
+    var countdownText by remember { mutableStateOf("") }
+
+    if (proactiveEnabled) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                val remaining = onGetNextTriggerMs() - System.currentTimeMillis()
+                countdownText = if (remaining > 0) {
+                    val totalSeconds = remaining / 1000
+                    val mm = totalSeconds / 60
+                    val ss = totalSeconds % 60
+                    "主动消息: 剩余 %02d:%02d".format(mm, ss)
+                } else {
+                    "主动消息: 即将触发"
+                }
+                delay(1_000L)
+            }
+        }
+    }
+
+    val effectivePrompt = if (directorEnabled) {
+        directorSystemPrompt.takeUnless { it.isBlank() }
+            ?: OpenAiCompatibleDirectorService.DEFAULT_DIRECTOR_SYSTEM_PROMPT
+    } else null
+
+    if (!proactiveEnabled && effectivePrompt == null) return
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (proactiveEnabled && countdownText.isNotEmpty()) {
+                Text(
+                    text = countdownText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            if (effectivePrompt != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { directorExpanded = !directorExpanded },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "导演提示词 ${if (directorExpanded) "▲" else "▼"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+                AnimatedVisibility(visible = directorExpanded) {
+                    Text(
+                        text = effectivePrompt,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+    }
 }

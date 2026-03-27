@@ -4,6 +4,13 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import io.github.c1921.realchat.data.agent.DirectorService
+import io.github.c1921.realchat.data.agent.EmotionUpdater
+import io.github.c1921.realchat.data.agent.MemorySummarizer
+import io.github.c1921.realchat.data.agent.OpenAiCompatibleDirectorService
+import io.github.c1921.realchat.data.agent.OpenAiCompatibleEmotionUpdater
+import io.github.c1921.realchat.data.agent.OpenAiCompatibleMemorySummarizer
+import io.github.c1921.realchat.data.agent.ProactiveMessagingController
 import io.github.c1921.realchat.data.character.CharacterCardExportPayload
 import io.github.c1921.realchat.data.character.CharacterCardRepository
 import io.github.c1921.realchat.data.character.RoomCharacterCardRepository
@@ -17,12 +24,18 @@ import io.github.c1921.realchat.data.chat.buildChatCompletionsUrl
 import io.github.c1921.realchat.data.settings.AppPreferences
 import io.github.c1921.realchat.data.settings.AppPreferencesRepository
 import io.github.c1921.realchat.data.settings.DataStoreAppPreferencesRepository
+import io.github.c1921.realchat.model.AgentSettings
+import io.github.c1921.realchat.model.DirectorSettings
+import io.github.c1921.realchat.model.MemorySettings
+import io.github.c1921.realchat.model.ProactiveSettings
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
+import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
+import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 import io.github.c1921.realchat.model.UserPersona
@@ -68,11 +81,13 @@ data class ConversationUiState(
     val messages: List<ChatMessage> = emptyList(),
     val draft: String = "",
     val isSending: Boolean = false,
+    val isDirectorAnalyzing: Boolean = false,
     val errorText: String? = null,
     val statusText: String? = null,
     val hasValidConfig: Boolean = false,
     val showCreateDialog: Boolean = false,
-    val pendingCharacterCardId: Long? = null
+    val pendingCharacterCardId: Long? = null,
+    val emotionState: EmotionState = EmotionState()
 ) {
     fun selectedConversation(): Conversation? {
         return conversationItems.firstOrNull { it.conversation.id == selectedConversationId }
@@ -115,6 +130,15 @@ data class SettingsUiState(
     val baseUrl: String = ProviderConfig.DEFAULT_BASE_URL,
     val personaName: String = "",
     val personaDescription: String = "",
+    val proactiveEnabled: Boolean = false,
+    val proactiveMinIntervalMinutes: Int = 30,
+    val proactiveMaxIntervalMinutes: Int = 1440,
+    val directorEnabled: Boolean = false,
+    val directorSystemPrompt: String = "",
+    val memoryEnabled: Boolean = false,
+    val memoryTriggerCount: Int = 40,
+    val memoryKeepCount: Int = 10,
+    val developerModeEnabled: Boolean = false,
     val errorText: String? = null,
     val statusText: String? = null
 )
@@ -132,7 +156,10 @@ class ChatViewModel(
     private val characterCardRepository: CharacterCardRepository,
     private val conversationRepository: ConversationRepository,
     private val chatProvider: ChatProvider,
-    private val promptComposer: PromptComposer
+    private val promptComposer: PromptComposer,
+    private val directorService: DirectorService,
+    private val emotionUpdater: EmotionUpdater,
+    private val memorySummarizer: MemorySummarizer
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(MainUiState())
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
@@ -140,6 +167,8 @@ class ChatViewModel(
     private val draftWriteMutex = Mutex()
 
     private var activePreferences: AppPreferences = AppPreferences()
+    private var activeAgentSettings: AgentSettings = AgentSettings()
+    private var activeEmotionState: EmotionState = EmotionState()
     private var providerDrafts: MutableMap<ProviderType, ProviderConfig> =
         ProviderConfig.defaultsByProvider().toMutableMap()
     private var availableCards: List<CharacterCard> = emptyList()
@@ -148,6 +177,12 @@ class ChatViewModel(
     private var lastAppliedSelectedProviderType: ProviderType? = null
     private var lastAppliedProviderConfigs: Map<ProviderType, ProviderConfig>? = null
     private var lastAppliedUserPersona: UserPersona? = null
+    private var lastAppliedAgentSettings: AgentSettings? = null
+
+    internal val proactiveController = ProactiveMessagingController(
+        scope = viewModelScope,
+        onTrigger = { elapsedMs -> sendProactiveMessage(elapsedMs) }
+    )
 
     init {
         bootstrap()
@@ -370,6 +405,62 @@ class ChatViewModel(
         }
     }
 
+    fun updateProactiveEnabled(enabled: Boolean) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(proactiveEnabled = enabled))
+        }
+    }
+
+    fun updateDeveloperModeEnabled(enabled: Boolean) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(developerModeEnabled = enabled))
+        }
+    }
+
+    fun getProactiveNextTriggerMs(): Long = proactiveController.getNextTriggerMs()
+
+    fun updateProactiveMinInterval(minutes: Int) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(proactiveMinIntervalMinutes = minutes))
+        }
+    }
+
+    fun updateProactiveMaxInterval(minutes: Int) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(proactiveMaxIntervalMinutes = minutes))
+        }
+    }
+
+    fun updateDirectorEnabled(enabled: Boolean) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(directorEnabled = enabled))
+        }
+    }
+
+    fun updateDirectorSystemPrompt(prompt: String) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(directorSystemPrompt = prompt))
+        }
+    }
+
+    fun updateMemoryEnabled(enabled: Boolean) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(memoryEnabled = enabled))
+        }
+    }
+
+    fun updateMemoryTriggerCount(count: Int) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(memoryTriggerCount = count))
+        }
+    }
+
+    fun updateMemoryKeepCount(count: Int) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(memoryKeepCount = count))
+        }
+    }
+
     fun saveSettings() {
         val form = uiState.value.settings
         val selectedConfig = ProviderConfig(
@@ -404,6 +495,24 @@ class ChatViewModel(
             }
         }
 
+        val agentSettings = AgentSettings(
+            proactive = ProactiveSettings(
+                enabled = form.proactiveEnabled,
+                minIntervalMinutes = form.proactiveMinIntervalMinutes.coerceAtLeast(3),
+                maxIntervalMinutes = form.proactiveMaxIntervalMinutes
+                    .coerceAtLeast(form.proactiveMinIntervalMinutes.coerceAtLeast(3))
+            ),
+            director = DirectorSettings(
+                enabled = form.directorEnabled,
+                systemPrompt = form.directorSystemPrompt
+            ),
+            memory = MemorySettings(
+                enabled = form.memoryEnabled,
+                triggerCount = form.memoryTriggerCount,
+                keepRecentCount = form.memoryKeepCount
+            )
+        )
+
         viewModelScope.launch {
             runCatching {
                 appPreferencesRepository.saveProviderSettings(
@@ -411,6 +520,8 @@ class ChatViewModel(
                     providerConfigs = providerConfigs
                 )
                 appPreferencesRepository.saveUserPersona(persona)
+                appPreferencesRepository.saveAgentSettings(agentSettings)
+                appPreferencesRepository.saveDeveloperMode(form.developerModeEnabled)
             }.onSuccess {
                 providerDrafts = providerConfigs.toMutableMap()
                 _uiState.update { current ->
@@ -473,6 +584,8 @@ class ChatViewModel(
         current: SettingsUiState,
         selectedProviderType: ProviderType,
         userPersona: UserPersona,
+        agentSettings: AgentSettings,
+        developerModeEnabled: Boolean,
         applyProviderDraft: Boolean
     ): SettingsUiState {
         val settingsWithProvider = if (applyProviderDraft) {
@@ -489,7 +602,16 @@ class ChatViewModel(
 
         return settingsWithProvider.copy(
             personaName = userPersona.displayName,
-            personaDescription = userPersona.description
+            personaDescription = userPersona.description,
+            proactiveEnabled = agentSettings.proactive.enabled,
+            proactiveMinIntervalMinutes = agentSettings.proactive.minIntervalMinutes,
+            proactiveMaxIntervalMinutes = agentSettings.proactive.maxIntervalMinutes,
+            directorEnabled = agentSettings.director.enabled,
+            directorSystemPrompt = agentSettings.director.systemPrompt,
+            memoryEnabled = agentSettings.memory.enabled,
+            memoryTriggerCount = agentSettings.memory.triggerCount,
+            memoryKeepCount = agentSettings.memory.keepRecentCount,
+            developerModeEnabled = developerModeEnabled
         )
     }
 
@@ -758,8 +880,7 @@ class ChatViewModel(
             return
         }
 
-        val activeBundle = activeConversationBundle
-        if (activeBundle == null) {
+        if (activeConversationBundle == null) {
             _uiState.update { current ->
                 current.copy(
                     conversation = current.conversation.copy(
@@ -775,16 +896,36 @@ class ChatViewModel(
             return
         }
 
-        val historyMessages = activeBundle.messages + ChatMessage(
-            role = ChatRole.User,
-            content = userContent
-        )
+        viewModelScope.launch {
+            sendMessageInternal(userContent = userContent, catalyst = null)
+        }
+    }
 
-        val requestMessages = promptComposer.compose(
-            characterSnapshot = activeBundle.conversation.characterSnapshot,
-            userPersona = activePreferences.userPersona,
-            conversationMessages = historyMessages
-        )
+    private fun sendProactiveMessage(elapsedMs: Long) {
+        if (uiState.value.conversation.isSending) return
+        val bundle = activeConversationBundle ?: return
+        val normalizedConfig = activePreferences.providerConfig.normalized()
+        if (!normalizedConfig.hasRequiredFields()) return
+
+        val characterName = bundle.conversation.characterSnapshot?.effectiveName()
+            ?: CharacterCardSnapshot.DEFAULT_CHARACTER_NAME
+        val elapsedMinutes = elapsedMs / 60_000
+        val catalyst = "距上次对话已过去约 $elapsedMinutes 分钟，请以 $characterName 的身份主动发起新话题或表达关心。"
+
+        viewModelScope.launch {
+            sendMessageInternal(userContent = null, catalyst = catalyst)
+        }
+    }
+
+    private suspend fun sendMessageInternal(userContent: String?, catalyst: String?) {
+        val activeBundle = activeConversationBundle ?: return
+        val normalizedConfig = activePreferences.providerConfig.normalized()
+
+        val historyMessages = if (userContent != null) {
+            activeBundle.messages + ChatMessage(role = ChatRole.User, content = userContent)
+        } else {
+            activeBundle.messages
+        }
 
         _uiState.update { current ->
             current.copy(
@@ -796,49 +937,160 @@ class ChatViewModel(
             )
         }
 
-        viewModelScope.launch {
-            chatProvider.send(
-                messages = requestMessages,
+        checkAndSummarizeIfNeeded(
+            messages = historyMessages,
+            conversationId = activeBundle.conversation.id,
+            config = normalizedConfig,
+            snapshot = activeBundle.conversation.characterSnapshot
+        )
+
+        val guidance = if (activeAgentSettings.director.enabled) {
+            _uiState.update { current ->
+                current.copy(
+                    conversation = current.conversation.copy(
+                        isDirectorAnalyzing = true,
+                        statusText = "导演分析中..."
+                    )
+                )
+            }
+            val result = directorService.analyze(
+                snapshot = activeBundle.conversation.characterSnapshot,
+                emotionState = activeEmotionState,
+                conversationMessages = historyMessages,
                 config = normalizedConfig
-            ).fold(
-                onSuccess = { assistantMessage ->
-                    runCatching {
+            ).getOrNull()
+            _uiState.update { current ->
+                current.copy(
+                    conversation = current.conversation.copy(
+                        isDirectorAnalyzing = false,
+                        statusText = null
+                    )
+                )
+            }
+            result
+        } else {
+            null
+        }
+
+        val requestMessages = promptComposer.compose(
+            characterSnapshot = activeBundle.conversation.characterSnapshot,
+            userPersona = activePreferences.userPersona,
+            conversationMessages = historyMessages,
+            directorGuidance = guidance,
+            proactiveCatalyst = catalyst,
+            emotionState = activeEmotionState
+        )
+
+        chatProvider.send(
+            messages = requestMessages,
+            config = normalizedConfig
+        ).fold(
+            onSuccess = { assistantMessage ->
+                runCatching {
+                    if (userContent != null) {
                         conversationRepository.appendSuccessfulExchange(
                             conversationId = activeBundle.conversation.id,
                             userContent = userContent,
                             assistantMessage = assistantMessage
                         )
-                    }.onSuccess {
-                        _uiState.update { current ->
-                            current.copy(
-                                conversation = current.conversation.copy(
-                                    isSending = false,
-                                    errorText = null
-                                )
-                            )
-                        }
-                    }.onFailure { throwable ->
-                        _uiState.update { current ->
-                            current.copy(
-                                conversation = current.conversation.copy(
-                                    isSending = false,
-                                    errorText = throwable.message ?: "保存聊天记录失败。"
-                                )
-                            )
-                        }
+                    } else {
+                        conversationRepository.appendProactiveMessage(
+                            conversationId = activeBundle.conversation.id,
+                            assistantMessage = assistantMessage
+                        )
                     }
-                },
-                onFailure = { throwable ->
+                }.onSuccess {
+                    proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
                     _uiState.update { current ->
                         current.copy(
                             conversation = current.conversation.copy(
                                 isSending = false,
-                                errorText = throwable.message ?: "请求失败。"
+                                errorText = null
+                            )
+                        )
+                    }
+                    updateEmotionAsync(
+                        conversationId = activeBundle.conversation.id,
+                        snapshot = activeBundle.conversation.characterSnapshot,
+                        recentMessages = historyMessages + assistantMessage,
+                        config = normalizedConfig
+                    )
+                }.onFailure { throwable ->
+                    _uiState.update { current ->
+                        current.copy(
+                            conversation = current.conversation.copy(
+                                isSending = false,
+                                errorText = throwable.message ?: "保存聊天记录失败。"
                             )
                         )
                     }
                 }
+            },
+            onFailure = { throwable ->
+                _uiState.update { current ->
+                    current.copy(
+                        conversation = current.conversation.copy(
+                            isSending = false,
+                            isDirectorAnalyzing = false,
+                            statusText = null,
+                            errorText = throwable.message ?: "请求失败。"
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    private suspend fun checkAndSummarizeIfNeeded(
+        messages: List<ChatMessage>,
+        conversationId: Long,
+        config: ProviderConfig,
+        snapshot: CharacterCardSnapshot?
+    ) {
+        val memorySettings = activeAgentSettings.memory
+        if (!memorySettings.enabled) return
+        if (messages.size <= memorySettings.triggerCount) return
+
+        val keepMessages = messages.takeLast(memorySettings.keepRecentCount)
+        val toSummarize = messages.dropLast(memorySettings.keepRecentCount)
+        if (toSummarize.isEmpty()) return
+
+        memorySummarizer.summarize(
+            messagesToSummarize = toSummarize,
+            snapshot = snapshot,
+            config = config
+        ).onSuccess { summary ->
+            conversationRepository.replaceWithSummary(
+                conversationId = conversationId,
+                summaryText = summary,
+                keepRecentMessages = keepMessages
             )
+        }
+    }
+
+    private fun updateEmotionAsync(
+        conversationId: Long,
+        snapshot: CharacterCardSnapshot?,
+        recentMessages: List<ChatMessage>,
+        config: ProviderConfig
+    ) {
+        viewModelScope.launch {
+            emotionUpdater.update(
+                currentState = activeEmotionState,
+                snapshot = snapshot,
+                recentMessages = recentMessages,
+                config = config
+            ).onSuccess { newState ->
+                activeEmotionState = newState
+                conversationRepository.updateEmotionState(conversationId, newState)
+                _uiState.update { current ->
+                    current.copy(
+                        conversation = current.conversation.copy(
+                            emotionState = newState
+                        )
+                    )
+                }
+            }
         }
     }
 
@@ -857,20 +1109,36 @@ class ChatViewModel(
                 val providerChanged = lastAppliedSelectedProviderType != preferences.selectedProviderType ||
                     lastAppliedProviderConfigs != preferences.providerConfigs
                 val personaChanged = lastAppliedUserPersona != preferences.userPersona
+                val agentSettingsChanged = lastAppliedAgentSettings != preferences.agentSettings
                 lastAppliedSelectedProviderType = preferences.selectedProviderType
                 lastAppliedProviderConfigs = preferences.providerConfigs
                 lastAppliedUserPersona = preferences.userPersona
+                lastAppliedAgentSettings = preferences.agentSettings
                 if (providerChanged) {
                     providerDrafts = preferences.providerConfigs.mapValuesTo(mutableMapOf()) { (providerType, config) ->
                         config.copy(providerType = providerType)
                     }
                 }
+                if (agentSettingsChanged) {
+                    activeAgentSettings = preferences.agentSettings
+                    (directorService as? OpenAiCompatibleDirectorService)
+                        ?.updateSystemPrompt(preferences.agentSettings.director.systemPrompt)
+                    if (preferences.agentSettings.proactive.enabled) {
+                        val lastTs = activeConversationBundle?.conversation?.updatedAt
+                            ?: System.currentTimeMillis()
+                        proactiveController.start(preferences.agentSettings.proactive, lastTs)
+                    } else {
+                        proactiveController.stop()
+                    }
+                }
                 _uiState.update { current ->
-                    val syncedSettings = if (providerChanged || personaChanged) {
+                    val syncedSettings = if (providerChanged || personaChanged || agentSettingsChanged) {
                         syncSettingsState(
                             current = current.settings,
                             selectedProviderType = preferences.selectedProviderType,
                             userPersona = preferences.userPersona,
+                            agentSettings = preferences.agentSettings,
+                            developerModeEnabled = preferences.developerModeEnabled,
                             applyProviderDraft = providerChanged
                         )
                     } else {
@@ -986,13 +1254,15 @@ class ChatViewModel(
     private fun observeSelectedConversation(conversationId: Long?) {
         activeConversationJob?.cancel()
         activeConversationBundle = null
+        proactiveController.stop()
 
         _uiState.update { current ->
             current.copy(
                 conversation = current.conversation.copy(
                     messages = emptyList(),
                     draft = "",
-                    isSending = false
+                    isSending = false,
+                    emotionState = EmotionState()
                 )
             )
         }
@@ -1004,11 +1274,21 @@ class ChatViewModel(
         activeConversationJob = viewModelScope.launch {
             conversationRepository.observeConversationWithMessages(conversationId).collect { bundle ->
                 activeConversationBundle = bundle
+                if (bundle != null) {
+                    activeEmotionState = bundle.conversation.emotionState
+                    if (activeAgentSettings.proactive.enabled) {
+                        proactiveController.start(
+                            settings = activeAgentSettings.proactive,
+                            lastMessageTimestampMs = bundle.conversation.updatedAt
+                        )
+                    }
+                }
                 _uiState.update { current ->
                     current.copy(
                         conversation = current.conversation.copy(
                             messages = bundle?.messages.orEmpty(),
-                            draft = bundle?.conversation?.draft.orEmpty()
+                            draft = bundle?.conversation?.draft.orEmpty(),
+                            emotionState = bundle?.conversation?.emotionState ?: EmotionState()
                         )
                     )
                 }
@@ -1098,7 +1378,10 @@ class ChatViewModel(
                 characterCardRepository = characterCardRepository,
                 conversationRepository = conversationRepository,
                 chatProvider = provider,
-                promptComposer = PromptComposer()
+                promptComposer = PromptComposer(),
+                directorService = OpenAiCompatibleDirectorService(chatProvider = provider),
+                emotionUpdater = OpenAiCompatibleEmotionUpdater(chatProvider = provider),
+                memorySummarizer = OpenAiCompatibleMemorySummarizer(chatProvider = provider)
             ) as T
         }
     }

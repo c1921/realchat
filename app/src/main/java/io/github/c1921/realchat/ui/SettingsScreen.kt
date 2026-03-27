@@ -1,5 +1,6 @@
 package io.github.c1921.realchat.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,11 +12,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,6 +42,15 @@ fun SettingsScreen(
     onBaseUrlChange: (String) -> Unit,
     onPersonaNameChange: (String) -> Unit,
     onPersonaDescriptionChange: (String) -> Unit,
+    onProactiveEnabledChange: (Boolean) -> Unit,
+    onProactiveMinIntervalChange: (String) -> Unit,
+    onProactiveMaxIntervalChange: (String) -> Unit,
+    onDirectorEnabledChange: (Boolean) -> Unit,
+    onDirectorSystemPromptChange: (String) -> Unit,
+    onMemoryEnabledChange: (Boolean) -> Unit,
+    onMemoryTriggerCountChange: (String) -> Unit,
+    onMemoryKeepCountChange: (String) -> Unit,
+    onDeveloperModeEnabledChange: (Boolean) -> Unit,
     onSaveSettings: () -> Unit
 ) {
     var providerMenuExpanded by remember { mutableStateOf(false) }
@@ -148,6 +160,116 @@ fun SettingsScreen(
             text = settings.providerType.supportText(),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        Divider()
+
+        Text(
+            text = "Agent 设置",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("主动消息", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = settings.proactiveEnabled,
+                onCheckedChange = onProactiveEnabledChange
+            )
+        }
+
+        AnimatedVisibility(visible = settings.proactiveEnabled) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = settings.proactiveMinIntervalMinutes.toString(),
+                    onValueChange = onProactiveMinIntervalChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("最短间隔（分钟）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                OutlinedTextField(
+                    value = settings.proactiveMaxIntervalMinutes.toString(),
+                    onValueChange = onProactiveMaxIntervalChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("最长间隔（分钟）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("导演系统", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = settings.directorEnabled,
+                onCheckedChange = onDirectorEnabledChange
+            )
+        }
+
+        AnimatedVisibility(visible = settings.directorEnabled) {
+            OutlinedTextField(
+                value = settings.directorSystemPrompt,
+                onValueChange = onDirectorSystemPromptChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("导演提示词（留空使用默认）") },
+                minLines = 3
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("记忆摘要", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = settings.memoryEnabled,
+                onCheckedChange = onMemoryEnabledChange
+            )
+        }
+
+        AnimatedVisibility(visible = settings.memoryEnabled) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = settings.memoryTriggerCount.toString(),
+                    onValueChange = onMemoryTriggerCountChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("触发压缩的消息数阈值") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                OutlinedTextField(
+                    value = settings.memoryKeepCount.toString(),
+                    onValueChange = onMemoryKeepCountChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("保留最近消息数") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+        }
+
+        Divider()
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("开发者模式", style = MaterialTheme.typography.bodyLarge)
+            Switch(
+                checked = settings.developerModeEnabled,
+                onCheckedChange = onDeveloperModeEnabledChange
+            )
+        }
 
         if (!settings.errorText.isNullOrBlank()) {
             SupportText(

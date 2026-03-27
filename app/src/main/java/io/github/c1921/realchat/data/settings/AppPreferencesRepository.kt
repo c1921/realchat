@@ -2,10 +2,16 @@ package io.github.c1921.realchat.data.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import io.github.c1921.realchat.model.AgentSettings
+import io.github.c1921.realchat.model.DirectorSettings
+import io.github.c1921.realchat.model.MemorySettings
+import io.github.c1921.realchat.model.ProactiveSettings
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 import io.github.c1921.realchat.model.UserPersona
@@ -18,7 +24,9 @@ data class AppPreferences(
     val selectedProviderType: ProviderType = ProviderConfig.DEFAULT_PROVIDER_TYPE,
     val providerConfigs: Map<ProviderType, ProviderConfig> = ProviderConfig.defaultsByProvider(),
     val userPersona: UserPersona = UserPersona(),
-    val selectedConversationId: Long? = null
+    val selectedConversationId: Long? = null,
+    val agentSettings: AgentSettings = AgentSettings(),
+    val developerModeEnabled: Boolean = false
 ) {
     val providerConfig: ProviderConfig
         get() = providerConfigs[selectedProviderType]
@@ -36,6 +44,10 @@ interface AppPreferencesRepository {
     suspend fun saveUserPersona(userPersona: UserPersona)
 
     suspend fun saveSelectedConversationId(conversationId: Long?)
+
+    suspend fun saveAgentSettings(agentSettings: AgentSettings)
+
+    suspend fun saveDeveloperMode(enabled: Boolean)
 }
 
 class DataStoreAppPreferencesRepository(
@@ -60,7 +72,9 @@ class DataStoreAppPreferencesRepository(
                     displayName = preferences[PERSONA_NAME] ?: "",
                     description = preferences[PERSONA_DESCRIPTION] ?: ""
                 ),
-                selectedConversationId = preferences[SELECTED_CONVERSATION_ID]
+                selectedConversationId = preferences[SELECTED_CONVERSATION_ID],
+                agentSettings = buildAgentSettings(preferences),
+                developerModeEnabled = preferences[DEVELOPER_MODE_ENABLED] ?: false
             )
         }
     }
@@ -103,6 +117,25 @@ class DataStoreAppPreferencesRepository(
         }
     }
 
+    override suspend fun saveAgentSettings(agentSettings: AgentSettings) {
+        context.dataStore.edit { preferences ->
+            preferences[PROACTIVE_ENABLED] = agentSettings.proactive.enabled
+            preferences[PROACTIVE_MIN_INTERVAL] = agentSettings.proactive.minIntervalMinutes
+            preferences[PROACTIVE_MAX_INTERVAL] = agentSettings.proactive.maxIntervalMinutes
+            preferences[DIRECTOR_ENABLED] = agentSettings.director.enabled
+            preferences[DIRECTOR_SYSTEM_PROMPT] = agentSettings.director.systemPrompt
+            preferences[MEMORY_ENABLED] = agentSettings.memory.enabled
+            preferences[MEMORY_TRIGGER_COUNT] = agentSettings.memory.triggerCount
+            preferences[MEMORY_KEEP_COUNT] = agentSettings.memory.keepRecentCount
+        }
+    }
+
+    override suspend fun saveDeveloperMode(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[DEVELOPER_MODE_ENABLED] = enabled
+        }
+    }
+
     private companion object {
         val PROVIDER_TYPE = stringPreferencesKey("provider_type")
         val LEGACY_API_KEY = stringPreferencesKey("api_key")
@@ -111,6 +144,16 @@ class DataStoreAppPreferencesRepository(
         val PERSONA_NAME = stringPreferencesKey("persona_name")
         val PERSONA_DESCRIPTION = stringPreferencesKey("persona_description")
         val SELECTED_CONVERSATION_ID = longPreferencesKey("selected_conversation_id")
+
+        val PROACTIVE_ENABLED = booleanPreferencesKey("proactive_enabled")
+        val PROACTIVE_MIN_INTERVAL = intPreferencesKey("proactive_min_interval_minutes")
+        val PROACTIVE_MAX_INTERVAL = intPreferencesKey("proactive_max_interval_minutes")
+        val DIRECTOR_ENABLED = booleanPreferencesKey("director_enabled")
+        val DIRECTOR_SYSTEM_PROMPT = stringPreferencesKey("director_system_prompt")
+        val MEMORY_ENABLED = booleanPreferencesKey("memory_enabled")
+        val MEMORY_TRIGGER_COUNT = intPreferencesKey("memory_trigger_count")
+        val MEMORY_KEEP_COUNT = intPreferencesKey("memory_keep_count")
+        val DEVELOPER_MODE_ENABLED = booleanPreferencesKey("developer_mode_enabled")
 
         fun parseProviderType(value: String): ProviderType {
             return runCatching { ProviderType.valueOf(value) }
@@ -155,5 +198,30 @@ class DataStoreAppPreferencesRepository(
 
         fun providerBaseUrl(providerType: ProviderType) =
             stringPreferencesKey("base_url_${providerType.name.lowercase()}")
+
+        fun buildAgentSettings(preferences: Preferences): AgentSettings {
+            val defaults = AgentSettings()
+            return AgentSettings(
+                proactive = ProactiveSettings(
+                    enabled = preferences[PROACTIVE_ENABLED] ?: defaults.proactive.enabled,
+                    minIntervalMinutes = preferences[PROACTIVE_MIN_INTERVAL]
+                        ?: defaults.proactive.minIntervalMinutes,
+                    maxIntervalMinutes = preferences[PROACTIVE_MAX_INTERVAL]
+                        ?: defaults.proactive.maxIntervalMinutes
+                ),
+                director = DirectorSettings(
+                    enabled = preferences[DIRECTOR_ENABLED] ?: defaults.director.enabled,
+                    systemPrompt = preferences[DIRECTOR_SYSTEM_PROMPT]
+                        ?: defaults.director.systemPrompt
+                ),
+                memory = MemorySettings(
+                    enabled = preferences[MEMORY_ENABLED] ?: defaults.memory.enabled,
+                    triggerCount = preferences[MEMORY_TRIGGER_COUNT]
+                        ?: defaults.memory.triggerCount,
+                    keepRecentCount = preferences[MEMORY_KEEP_COUNT]
+                        ?: defaults.memory.keepRecentCount
+                )
+            )
+        }
     }
 }

@@ -8,11 +8,15 @@ import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
+import io.github.c1921.realchat.model.EmotionState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 interface ConversationRepository {
     fun observeConversations(): Flow<List<Conversation>>
@@ -38,6 +42,16 @@ interface ConversationRepository {
     suspend fun deleteConversation(conversationId: Long)
 
     suspend fun ensureConversationExists(characterCard: CharacterCard): Long
+
+    suspend fun appendProactiveMessage(conversationId: Long, assistantMessage: ChatMessage)
+
+    suspend fun updateEmotionState(conversationId: Long, state: EmotionState)
+
+    suspend fun replaceWithSummary(
+        conversationId: Long,
+        summaryText: String,
+        keepRecentMessages: List<ChatMessage>
+    )
 }
 
 class RoomConversationRepository(
@@ -177,7 +191,69 @@ class RoomConversationRepository(
         return createConversation(characterCard = characterCard)
     }
 
+    override suspend fun appendProactiveMessage(
+        conversationId: Long,
+        assistantMessage: ChatMessage
+    ) {
+        val existing = conversationDao.getById(conversationId) ?: return
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            messageDao.insert(
+                ConversationMessageEntity(
+                    conversationId = conversationId,
+                    role = assistantMessage.role.wireName,
+                    content = assistantMessage.content,
+                    createdAt = now
+                )
+            )
+            conversationDao.update(existing.copy(updatedAt = now))
+        }
+    }
+
+    override suspend fun updateEmotionState(conversationId: Long, state: EmotionState) {
+        val existing = conversationDao.getById(conversationId) ?: return
+        val normalizedState = state.normalized()
+        val emotionJson = "{\"affection\":${normalizedState.affection},\"mood\":${normalizedState.mood}}"
+        conversationDao.update(existing.copy(emotionStateJson = emotionJson))
+    }
+
+    override suspend fun replaceWithSummary(
+        conversationId: Long,
+        summaryText: String,
+        keepRecentMessages: List<ChatMessage>
+    ) {
+        val existing = conversationDao.getById(conversationId) ?: return
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            val allMessages = messageDao.getByConversationId(conversationId)
+            val keepCount = keepRecentMessages.size
+            val keepIds = allMessages.takeLast(keepCount).map { it.id }
+            if (keepIds.isEmpty()) {
+                messageDao.deleteAll(conversationId)
+            } else {
+                messageDao.deleteExcept(conversationId, keepIds)
+            }
+            messageDao.insert(
+                ConversationMessageEntity(
+                    conversationId = conversationId,
+                    role = ChatRole.System.wireName,
+                    content = "[记忆摘要] $summaryText",
+                    createdAt = now - 1
+                )
+            )
+            conversationDao.update(existing.copy(memorySummary = summaryText))
+        }
+    }
+
     private fun ConversationEntity.toDomain(): Conversation {
+        val emotionState = runCatching {
+            val element = Json.parseToJsonElement(emotionStateJson).jsonObject
+            EmotionState(
+                affection = element["affection"]?.jsonPrimitive?.int ?: 50,
+                mood = element["mood"]?.jsonPrimitive?.int ?: 0
+            ).normalized()
+        }.getOrDefault(EmotionState())
+
         return Conversation(
             id = id,
             characterCardId = characterCardId,
@@ -190,7 +266,9 @@ class RoomConversationRepository(
                 },
             draft = draft,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            memorySummary = memorySummary,
+            emotionState = emotionState
         )
     }
 

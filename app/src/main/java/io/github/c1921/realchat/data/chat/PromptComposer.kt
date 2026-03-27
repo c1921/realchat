@@ -3,13 +3,18 @@ package io.github.c1921.realchat.data.chat
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
+import io.github.c1921.realchat.model.DirectorGuidance
+import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.UserPersona
 
 class PromptComposer {
     fun compose(
         characterSnapshot: CharacterCardSnapshot?,
         userPersona: UserPersona,
-        conversationMessages: List<ChatMessage>
+        conversationMessages: List<ChatMessage>,
+        directorGuidance: DirectorGuidance? = null,
+        proactiveCatalyst: String? = null,
+        emotionState: EmotionState = EmotionState()
     ): List<ChatMessage> {
         val snapshot = characterSnapshot?.normalized()
         val normalizedPersona = userPersona.normalized()
@@ -40,6 +45,13 @@ class PromptComposer {
             )
         }
 
+        buildEmotionBlock(snapshot, emotionState)?.let { emotionBlock ->
+            requestMessages += ChatMessage(
+                role = ChatRole.System,
+                content = emotionBlock
+            )
+        }
+
         buildExampleBlock(snapshot, normalizedPersona)?.let { exampleBlock ->
             requestMessages += ChatMessage(
                 role = ChatRole.System,
@@ -48,6 +60,13 @@ class PromptComposer {
         }
 
         requestMessages += conversationMessages
+
+        buildDirectorGuidanceBlock(directorGuidance)?.let { guidanceBlock ->
+            requestMessages += ChatMessage(
+                role = ChatRole.System,
+                content = guidanceBlock
+            )
+        }
 
         requestMessages += ChatMessage(
             role = ChatRole.System,
@@ -59,6 +78,13 @@ class PromptComposer {
                 original = DEFAULT_POST_HISTORY_INSTRUCTIONS
             )
         )
+
+        proactiveCatalyst?.takeUnless { it.isBlank() }?.let { catalyst ->
+            requestMessages += ChatMessage(
+                role = ChatRole.User,
+                content = catalyst
+            )
+        }
 
         return requestMessages
     }
@@ -86,6 +112,27 @@ class PromptComposer {
                 append("设定：${userPersona.description}")
             }
         }.trim()
+    }
+
+    private fun buildEmotionBlock(
+        snapshot: CharacterCardSnapshot?,
+        emotionState: EmotionState
+    ): String? {
+        snapshot ?: return null
+        val characterName = snapshot.effectiveName()
+        return "当前 $characterName 状态：好感度 ${emotionState.affection}/100，心情 ${emotionState.mood}/5"
+    }
+
+    private fun buildDirectorGuidanceBlock(guidance: DirectorGuidance?): String? {
+        guidance ?: return null
+        val parts = buildList {
+            if (guidance.mood.isNotBlank()) add("氛围：${guidance.mood}")
+            if (guidance.topicDirection.isNotBlank()) add("话题方向：${guidance.topicDirection}")
+            if (guidance.pursue.isNotBlank()) add("推进：${guidance.pursue}")
+            if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
+        }
+        if (parts.isEmpty()) return null
+        return "导演指示：${parts.joinToString("，")}"
     }
 
     private fun buildExampleBlock(

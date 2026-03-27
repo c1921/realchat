@@ -52,6 +52,24 @@ class MainActivity : ComponentActivity() {
                     onBaseUrlChange = viewModel::updateBaseUrl,
                     onPersonaNameChange = viewModel::updatePersonaName,
                     onPersonaDescriptionChange = viewModel::updatePersonaDescription,
+                    onProactiveEnabledChange = viewModel::updateProactiveEnabled,
+                    onProactiveMinIntervalChange = { text ->
+                        text.toIntOrNull()?.let { viewModel.updateProactiveMinInterval(it) }
+                    },
+                    onProactiveMaxIntervalChange = { text ->
+                        text.toIntOrNull()?.let { viewModel.updateProactiveMaxInterval(it) }
+                    },
+                    onDirectorEnabledChange = viewModel::updateDirectorEnabled,
+                    onDirectorSystemPromptChange = viewModel::updateDirectorSystemPrompt,
+                    onMemoryEnabledChange = viewModel::updateMemoryEnabled,
+                    onMemoryTriggerCountChange = { text ->
+                        text.toIntOrNull()?.let { viewModel.updateMemoryTriggerCount(it) }
+                    },
+                    onMemoryKeepCountChange = { text ->
+                        text.toIntOrNull()?.let { viewModel.updateMemoryKeepCount(it) }
+                    },
+                    onDeveloperModeEnabledChange = viewModel::updateDeveloperModeEnabled,
+                    onGetProactiveNextTriggerMs = viewModel::getProactiveNextTriggerMs,
                     onSaveSettings = viewModel::saveSettings
                 )
             }

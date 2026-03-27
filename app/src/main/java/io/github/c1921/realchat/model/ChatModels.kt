@@ -222,7 +222,9 @@ data class Conversation(
     val characterSnapshot: CharacterCardSnapshot? = null,
     val draft: String = "",
     val createdAt: Long = 0L,
-    val updatedAt: Long = 0L
+    val updatedAt: Long = 0L,
+    val memorySummary: String = "",
+    val emotionState: EmotionState = EmotionState()
 )
 
 data class ConversationListItem(
