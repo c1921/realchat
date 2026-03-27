@@ -122,6 +122,7 @@ class DataStoreAppPreferencesRepository(
             preferences[PROACTIVE_ENABLED] = agentSettings.proactive.enabled
             preferences[PROACTIVE_MIN_INTERVAL] = agentSettings.proactive.minIntervalMinutes
             preferences[PROACTIVE_MAX_INTERVAL] = agentSettings.proactive.maxIntervalMinutes
+            preferences[PROACTIVE_MAX_COUNT] = agentSettings.proactive.maxCount
             preferences[DIRECTOR_ENABLED] = agentSettings.director.enabled
             preferences[DIRECTOR_SYSTEM_PROMPT] = agentSettings.director.systemPrompt
             preferences[MEMORY_ENABLED] = agentSettings.memory.enabled
@@ -148,6 +149,7 @@ class DataStoreAppPreferencesRepository(
         val PROACTIVE_ENABLED = booleanPreferencesKey("proactive_enabled")
         val PROACTIVE_MIN_INTERVAL = intPreferencesKey("proactive_min_interval_minutes")
         val PROACTIVE_MAX_INTERVAL = intPreferencesKey("proactive_max_interval_minutes")
+        val PROACTIVE_MAX_COUNT = intPreferencesKey("proactive_max_count")
         val DIRECTOR_ENABLED = booleanPreferencesKey("director_enabled")
         val DIRECTOR_SYSTEM_PROMPT = stringPreferencesKey("director_system_prompt")
         val MEMORY_ENABLED = booleanPreferencesKey("memory_enabled")
@@ -207,7 +209,8 @@ class DataStoreAppPreferencesRepository(
                     minIntervalMinutes = preferences[PROACTIVE_MIN_INTERVAL]
                         ?: defaults.proactive.minIntervalMinutes,
                     maxIntervalMinutes = preferences[PROACTIVE_MAX_INTERVAL]
-                        ?: defaults.proactive.maxIntervalMinutes
+                        ?: defaults.proactive.maxIntervalMinutes,
+                    maxCount = preferences[PROACTIVE_MAX_COUNT] ?: defaults.proactive.maxCount
                 ),
                 director = DirectorSettings(
                     enabled = preferences[DIRECTOR_ENABLED] ?: defaults.director.enabled,

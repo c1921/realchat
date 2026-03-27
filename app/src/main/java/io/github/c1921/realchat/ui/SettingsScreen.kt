@@ -45,6 +45,7 @@ fun SettingsScreen(
     onProactiveEnabledChange: (Boolean) -> Unit,
     onProactiveMinIntervalChange: (String) -> Unit,
     onProactiveMaxIntervalChange: (String) -> Unit,
+    onProactiveMaxCountChange: (String) -> Unit,
     onDirectorEnabledChange: (Boolean) -> Unit,
     onDirectorSystemPromptChange: (String) -> Unit,
     onMemoryEnabledChange: (Boolean) -> Unit,
@@ -196,6 +197,14 @@ fun SettingsScreen(
                     onValueChange = onProactiveMaxIntervalChange,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("最长间隔（分钟）") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                OutlinedTextField(
+                    value = settings.proactiveMaxCount.toString(),
+                    onValueChange = onProactiveMaxCountChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("最多发送次数（用户回复后重置）") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )

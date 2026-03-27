@@ -19,18 +19,44 @@ class ProactiveMessagingController(
     @Volatile
     private var nextTriggerMs: Long = Long.MAX_VALUE
 
+    @Volatile
+    private var sentCount: Int = 0
+
+    @Volatile
+    private var currentSettings: ProactiveSettings = ProactiveSettings()
+
     fun start(settings: ProactiveSettings, lastMessageTimestampMs: Long) {
         this.lastMessageTimestampMs = lastMessageTimestampMs
+        this.currentSettings = settings
         stop()
         scheduleNext(settings)
         timerJob = scope.launch {
+            // 立即检查一次，处理应用关闭期间已到期的情况
+            val nowAtStart = System.currentTimeMillis()
+            if (nowAtStart >= nextTriggerMs && sentCount < settings.maxCount) {
+                val elapsed = nowAtStart - this@ProactiveMessagingController.lastMessageTimestampMs
+                this@ProactiveMessagingController.lastMessageTimestampMs = nowAtStart
+                sentCount++
+                if (sentCount < settings.maxCount) {
+                    scheduleNext(settings)
+                } else {
+                    nextTriggerMs = Long.MAX_VALUE
+                }
+                onTrigger(elapsed)
+            }
             while (true) {
                 delay(CHECK_INTERVAL_MS)
+                if (sentCount >= settings.maxCount) break
                 val now = System.currentTimeMillis()
                 if (now >= nextTriggerMs) {
                     val elapsed = now - this@ProactiveMessagingController.lastMessageTimestampMs
                     this@ProactiveMessagingController.lastMessageTimestampMs = now
-                    scheduleNext(settings)
+                    sentCount++
+                    if (sentCount < settings.maxCount) {
+                        scheduleNext(settings)
+                    } else {
+                        nextTriggerMs = Long.MAX_VALUE
+                    }
                     onTrigger(elapsed)
                 }
             }
@@ -43,11 +69,18 @@ class ProactiveMessagingController(
         nextTriggerMs = Long.MAX_VALUE
     }
 
+    fun resetCount() {
+        sentCount = 0
+        scheduleNext(currentSettings)
+    }
+
     fun updateLastMessageTimestamp(ms: Long) {
         lastMessageTimestampMs = ms
     }
 
     fun getNextTriggerMs(): Long = nextTriggerMs
+
+    fun getSentCount(): Int = sentCount
 
     private fun scheduleNext(settings: ProactiveSettings) {
         val minMs = settings.minIntervalMs

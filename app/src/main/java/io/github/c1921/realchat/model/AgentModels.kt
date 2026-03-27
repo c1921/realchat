@@ -3,7 +3,8 @@ package io.github.c1921.realchat.model
 data class ProactiveSettings(
     val enabled: Boolean = false,
     val minIntervalMinutes: Int = 30,
-    val maxIntervalMinutes: Int = 1440
+    val maxIntervalMinutes: Int = 1440,
+    val maxCount: Int = 5
 ) {
     val minIntervalMs: Long get() = minIntervalMinutes * 60_000L
     val maxIntervalMs: Long get() = maxIntervalMinutes * 60_000L

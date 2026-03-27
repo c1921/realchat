@@ -136,6 +136,7 @@ data class SettingsUiState(
     val proactiveEnabled: Boolean = false,
     val proactiveMinIntervalMinutes: Int = 30,
     val proactiveMaxIntervalMinutes: Int = 1440,
+    val proactiveMaxCount: Int = 5,
     val directorEnabled: Boolean = false,
     val directorSystemPrompt: String = "",
     val memoryEnabled: Boolean = false,
@@ -422,6 +423,8 @@ class ChatViewModel(
 
     fun getProactiveNextTriggerMs(): Long = proactiveController.getNextTriggerMs()
 
+    fun getProactiveSentCount(): Int = proactiveController.getSentCount()
+
     fun updateProactiveMinInterval(minutes: Int) {
         _uiState.update { current ->
             current.copy(settings = current.settings.copy(proactiveMinIntervalMinutes = minutes))
@@ -431,6 +434,12 @@ class ChatViewModel(
     fun updateProactiveMaxInterval(minutes: Int) {
         _uiState.update { current ->
             current.copy(settings = current.settings.copy(proactiveMaxIntervalMinutes = minutes))
+        }
+    }
+
+    fun updateProactiveMaxCount(count: Int) {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(proactiveMaxCount = count))
         }
     }
 
@@ -503,7 +512,8 @@ class ChatViewModel(
                 enabled = form.proactiveEnabled,
                 minIntervalMinutes = form.proactiveMinIntervalMinutes.coerceAtLeast(3),
                 maxIntervalMinutes = form.proactiveMaxIntervalMinutes
-                    .coerceAtLeast(form.proactiveMinIntervalMinutes.coerceAtLeast(3))
+                    .coerceAtLeast(form.proactiveMinIntervalMinutes.coerceAtLeast(3)),
+                maxCount = form.proactiveMaxCount.coerceAtLeast(1)
             ),
             director = DirectorSettings(
                 enabled = form.directorEnabled,
@@ -609,6 +619,7 @@ class ChatViewModel(
             proactiveEnabled = agentSettings.proactive.enabled,
             proactiveMinIntervalMinutes = agentSettings.proactive.minIntervalMinutes,
             proactiveMaxIntervalMinutes = agentSettings.proactive.maxIntervalMinutes,
+            proactiveMaxCount = agentSettings.proactive.maxCount,
             directorEnabled = agentSettings.director.enabled,
             directorSystemPrompt = agentSettings.director.systemPrompt,
             memoryEnabled = agentSettings.memory.enabled,
@@ -1018,6 +1029,9 @@ class ChatViewModel(
                     }
                 }.onSuccess {
                     proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
+                    if (userContent != null) {
+                        proactiveController.resetCount()
+                    }
                     val guidanceText = guidance?.let { formatDirectorGuidance(it) }
                     val assistantIndex = historyMessages.size
                     _uiState.update { current ->

@@ -162,6 +162,7 @@ fun ChatDetailScreen(
     conversation: ConversationUiState,
     settings: SettingsUiState,
     onGetProactiveNextTriggerMs: () -> Long,
+    onGetProactiveSentCount: () -> Int,
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
     onDraftChange: (String) -> Unit,
@@ -237,7 +238,9 @@ fun ChatDetailScreen(
             if (settings.developerModeEnabled) {
                 DevDebugPanel(
                     proactiveEnabled = settings.proactiveEnabled,
-                    onGetNextTriggerMs = onGetProactiveNextTriggerMs
+                    proactiveMaxCount = settings.proactiveMaxCount,
+                    onGetNextTriggerMs = onGetProactiveNextTriggerMs,
+                    onGetSentCount = onGetProactiveSentCount
                 )
             }
 
@@ -879,15 +882,22 @@ internal fun SupportText(
 @Composable
 private fun DevDebugPanel(
     proactiveEnabled: Boolean,
-    onGetNextTriggerMs: () -> Long
+    proactiveMaxCount: Int,
+    onGetNextTriggerMs: () -> Long,
+    onGetSentCount: () -> Int
 ) {
     var countdownText by remember { mutableStateOf("") }
+    var sentCountText by remember { mutableStateOf("") }
 
     if (proactiveEnabled) {
         LaunchedEffect(Unit) {
             while (true) {
-                val remaining = onGetNextTriggerMs() - System.currentTimeMillis()
-                countdownText = if (remaining > 0) {
+                val sentCount = onGetSentCount()
+                val nextTriggerMs = onGetNextTriggerMs()
+                val remaining = nextTriggerMs - System.currentTimeMillis()
+                countdownText = if (sentCount >= proactiveMaxCount) {
+                    "主动消息: 已达上限（等待用户回复）"
+                } else if (remaining > 0) {
                     val totalSeconds = remaining / 1000
                     val mm = totalSeconds / 60
                     val ss = totalSeconds % 60
@@ -895,6 +905,7 @@ private fun DevDebugPanel(
                 } else {
                     "主动消息: 即将触发"
                 }
+                sentCountText = "已发送: $sentCount / $proactiveMaxCount"
                 delay(1_000L)
             }
         }
@@ -915,6 +926,13 @@ private fun DevDebugPanel(
             if (countdownText.isNotEmpty()) {
                 Text(
                     text = countdownText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            if (sentCountText.isNotEmpty()) {
+                Text(
+                    text = sentCountText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onTertiaryContainer
                 )

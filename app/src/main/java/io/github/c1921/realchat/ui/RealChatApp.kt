@@ -55,6 +55,7 @@ fun RealChatApp(
     onProactiveEnabledChange: (Boolean) -> Unit,
     onProactiveMinIntervalChange: (String) -> Unit,
     onProactiveMaxIntervalChange: (String) -> Unit,
+    onProactiveMaxCountChange: (String) -> Unit,
     onDirectorEnabledChange: (Boolean) -> Unit,
     onDirectorSystemPromptChange: (String) -> Unit,
     onMemoryEnabledChange: (Boolean) -> Unit,
@@ -62,6 +63,7 @@ fun RealChatApp(
     onMemoryKeepCountChange: (String) -> Unit,
     onDeveloperModeEnabledChange: (Boolean) -> Unit,
     onGetProactiveNextTriggerMs: () -> Long,
+    onGetProactiveSentCount: () -> Int,
     onSaveSettings: () -> Unit
 ) {
     val chatDetailScreen = uiState.secondaryScreen as? SecondaryScreen.ChatDetail
@@ -140,6 +142,7 @@ fun RealChatApp(
                 conversation = uiState.conversation,
                 settings = uiState.settings,
                 onGetProactiveNextTriggerMs = onGetProactiveNextTriggerMs,
+                onGetProactiveSentCount = onGetProactiveSentCount,
                 modifier = Modifier.padding(conversationScreenPadding),
                 onBack = onCloseSecondaryScreen,
                 onDraftChange = onDraftChange,
@@ -186,6 +189,7 @@ fun RealChatApp(
                 onProactiveEnabledChange = onProactiveEnabledChange,
                 onProactiveMinIntervalChange = onProactiveMinIntervalChange,
                 onProactiveMaxIntervalChange = onProactiveMaxIntervalChange,
+                onProactiveMaxCountChange = onProactiveMaxCountChange,
                 onDirectorEnabledChange = onDirectorEnabledChange,
                 onDirectorSystemPromptChange = onDirectorSystemPromptChange,
                 onMemoryEnabledChange = onMemoryEnabledChange,

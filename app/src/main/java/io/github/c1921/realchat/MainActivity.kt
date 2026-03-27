@@ -59,6 +59,9 @@ class MainActivity : ComponentActivity() {
                     onProactiveMaxIntervalChange = { text ->
                         text.toIntOrNull()?.let { viewModel.updateProactiveMaxInterval(it) }
                     },
+                    onProactiveMaxCountChange = { text ->
+                        text.toIntOrNull()?.let { viewModel.updateProactiveMaxCount(it) }
+                    },
                     onDirectorEnabledChange = viewModel::updateDirectorEnabled,
                     onDirectorSystemPromptChange = viewModel::updateDirectorSystemPrompt,
                     onMemoryEnabledChange = viewModel::updateMemoryEnabled,
@@ -70,6 +73,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onDeveloperModeEnabledChange = viewModel::updateDeveloperModeEnabled,
                     onGetProactiveNextTriggerMs = viewModel::getProactiveNextTriggerMs,
+                    onGetProactiveSentCount = viewModel::getProactiveSentCount,
                     onSaveSettings = viewModel::saveSettings
                 )
             }
