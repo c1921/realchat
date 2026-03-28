@@ -23,6 +23,7 @@ class ConversationScreenTest {
                     conversation = sampleConversationState(draft = "在吗"),
                     settings = SettingsUiState(),
                     onGetProactiveNextTriggerMs = { 0L },
+                    onGetProactiveSentCount = { 0 },
                     onBack = { },
                     onDraftChange = { },
                     onSendMessage = { }

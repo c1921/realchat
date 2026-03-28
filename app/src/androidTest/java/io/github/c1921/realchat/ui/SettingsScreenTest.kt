@@ -32,6 +32,7 @@ class SettingsScreenTest {
                     onProactiveEnabledChange = { },
                     onProactiveMinIntervalChange = { },
                     onProactiveMaxIntervalChange = { },
+                    onProactiveMaxCountChange = { },
                     onDirectorEnabledChange = { },
                     onDirectorSystemPromptChange = { },
                     onMemoryEnabledChange = { },
