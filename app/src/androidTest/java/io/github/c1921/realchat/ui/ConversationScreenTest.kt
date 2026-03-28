@@ -42,6 +42,75 @@ class ConversationScreenTest {
     }
 
     @Test
+    fun chatDetailScreen_showsDirectorGuidanceHintInDeveloperMode() {
+        val hint = "导演指示：氛围：温暖，推进：保持亲近"
+
+        composeRule.setContent {
+            MaterialTheme {
+                ChatDetailScreen(
+                    conversation = sampleConversationState(
+                        directorGuidanceHints = mapOf(0 to hint)
+                    ),
+                    settings = SettingsUiState(developerModeEnabled = true),
+                    onGetProactiveNextTriggerMs = { 0L },
+                    onGetProactiveSentCount = { 0 },
+                    onBack = { },
+                    onDraftChange = { },
+                    onSendMessage = { }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(hint).assertExists()
+    }
+
+    @Test
+    fun chatDetailScreen_hidesDirectorGuidanceHintWhenDeveloperModeDisabled() {
+        val hint = "导演指示：氛围：温暖，推进：保持亲近"
+
+        composeRule.setContent {
+            MaterialTheme {
+                ChatDetailScreen(
+                    conversation = sampleConversationState(
+                        directorGuidanceHints = mapOf(0 to hint)
+                    ),
+                    settings = SettingsUiState(),
+                    onGetProactiveNextTriggerMs = { 0L },
+                    onGetProactiveSentCount = { 0 },
+                    onBack = { },
+                    onDraftChange = { },
+                    onSendMessage = { }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(hint).assertDoesNotExist()
+    }
+
+    @Test
+    fun chatDetailScreen_ignoresMismatchedDirectorGuidanceIndex() {
+        val hint = "导演指示：不会显示"
+
+        composeRule.setContent {
+            MaterialTheme {
+                ChatDetailScreen(
+                    conversation = sampleConversationState(
+                        directorGuidanceHints = mapOf(1 to hint)
+                    ),
+                    settings = SettingsUiState(developerModeEnabled = true),
+                    onGetProactiveNextTriggerMs = { 0L },
+                    onGetProactiveSentCount = { 0 },
+                    onBack = { },
+                    onDraftChange = { },
+                    onSendMessage = { }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText(hint).assertDoesNotExist()
+    }
+
+    @Test
     fun conversationHomeScreen_rendersConversationRowsAndActions() {
         composeRule.setContent {
             MaterialTheme {
@@ -66,7 +135,10 @@ class ConversationScreenTest {
         composeRule.onNodeWithContentDescription("删除会话").assertExists()
     }
 
-    private fun sampleConversationState(draft: String = ""): ConversationUiState {
+    private fun sampleConversationState(
+        draft: String = "",
+        directorGuidanceHints: Map<Int, String> = emptyMap()
+    ): ConversationUiState {
         val conversation = Conversation(
             id = 1L,
             characterSnapshot = CharacterCardSnapshot(name = "小雨")
@@ -84,6 +156,7 @@ class ConversationScreenTest {
                 ChatMessage(ChatRole.User, "在吗"),
                 ChatMessage(ChatRole.System, "系统通知")
             ),
+            directorGuidanceHints = directorGuidanceHints,
             draft = draft,
             hasValidConfig = true
         )

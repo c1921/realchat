@@ -19,6 +19,7 @@ import io.github.c1921.realchat.model.Conversation
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.DirectorGuidance
+import io.github.c1921.realchat.model.DirectorSettings
 import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.MemorySettings
 import io.github.c1921.realchat.model.ProactiveSettings
@@ -360,6 +361,167 @@ class ChatViewModelTest {
 
         assertEquals("记忆摘要触发阈值不能小于 1。", error)
         assertEquals(40, preferencesRepository.preferences.value.agentSettings.memory.triggerCount)
+    }
+
+    @Test
+    fun sendMessage_recordsStructuredDirectorGuidanceHint() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 100L
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "你好")
+            )
+        )
+        val preferencesRepository = FakeAppPreferencesRepository().also { repository ->
+            repository.preferences.update { current ->
+                current.copy(
+                    agentSettings = current.agentSettings.copy(
+                        director = DirectorSettings(enabled = true)
+                    )
+                )
+            }
+        }
+        val directorService = FakeDirectorService(
+            Result.success(
+                DirectorGuidance(
+                    mood = "温暖",
+                    topicDirection = "聊案件",
+                    avoid = "争吵",
+                    pursue = "建立信任"
+                )
+            )
+        )
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = directorService,
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateDraft("继续")
+        advanceUntilIdle()
+        viewModel.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(1, directorService.callCount)
+        assertEquals(
+            mapOf(2 to "导演指示：氛围：温暖，话题方向：聊案件，推进：建立信任，避免：争吵"),
+            viewModel.uiState.value.conversation.directorGuidanceHints
+        )
+    }
+
+    @Test
+    fun sendMessage_fallsBackToRawDirectorOutputHint() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 100L
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "你好")
+            )
+        )
+        val preferencesRepository = FakeAppPreferencesRepository().also { repository ->
+            repository.preferences.update { current ->
+                current.copy(
+                    agentSettings = current.agentSettings.copy(
+                        director = DirectorSettings(enabled = true)
+                    )
+                )
+            }
+        }
+        val directorService = FakeDirectorService(
+            Result.success(DirectorGuidance(rawJson = "  {\"topic\":\"keep going\"}  "))
+        )
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = directorService,
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateDraft("继续")
+        advanceUntilIdle()
+        viewModel.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(1, directorService.callCount)
+        assertEquals(
+            mapOf(2 to "导演原始输出：{\"topic\":\"keep going\"}"),
+            viewModel.uiState.value.conversation.directorGuidanceHints
+        )
+    }
+
+    @Test
+    fun sendMessage_skipsDirectorHintWhenGuidanceIsEmpty() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 100L
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "你好")
+            )
+        )
+        val preferencesRepository = FakeAppPreferencesRepository().also { repository ->
+            repository.preferences.update { current ->
+                current.copy(
+                    agentSettings = current.agentSettings.copy(
+                        director = DirectorSettings(enabled = true)
+                    )
+                )
+            }
+        }
+        val directorService = FakeDirectorService(Result.success(DirectorGuidance()))
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = directorService,
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateDraft("继续")
+        advanceUntilIdle()
+        viewModel.sendMessage()
+        advanceUntilIdle()
+
+        assertEquals(1, directorService.callCount)
+        assertTrue(viewModel.uiState.value.conversation.directorGuidanceHints.isEmpty())
     }
 }
 

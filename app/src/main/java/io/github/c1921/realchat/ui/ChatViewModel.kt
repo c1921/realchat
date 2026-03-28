@@ -1280,7 +1280,11 @@ class ChatViewModel(
             if (guidance.pursue.isNotBlank()) add("推进：${guidance.pursue}")
             if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
         }
-        return if (parts.isEmpty()) null else "导演指示：${parts.joinToString("，")}"
+        if (parts.isNotEmpty()) {
+            return "导演指示：${parts.joinToString("，")}"
+        }
+        val rawOutput = guidance.rawJson.trim()
+        return rawOutput.takeIf(String::isNotEmpty)?.let { "导演原始输出：$it" }
     }
 
     private fun CharacterCardEditorState.toCharacterCard(): CharacterCard {
