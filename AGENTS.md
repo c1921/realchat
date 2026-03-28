@@ -137,8 +137,9 @@ Start-Process -FilePath $emulator -ArgumentList '-avd', 'Pixel_8'
 
 - `emulator -list-avds` 可见 `Pixel_8`
 - `adb devices -l` 可见在线设备 `emulator-5554`
-- 当前设备 Android 版本为 `15`
-- `./gradlew connectedDebugAndroidTest` 已在模拟器上跑通并通过 5 个测试
+- 当前设备 Android 版本为 `17`，SDK 为 `37`
+- `./gradlew connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=io.github.c1921.realchat.ui.ConversationScreenTest"` 已在模拟器上跑通并通过 5 个测试
+- `./gradlew connectedDebugAndroidTest` 当前会启动 12 个测试，其中 `io.github.c1921.realchat.ui.SettingsScreenTest` 有 2 个断言失败，不要再写成“全量已通过”
 
 ### 常见故障排查
 
@@ -153,6 +154,13 @@ Start-Process -FilePath $emulator -ArgumentList '-avd', 'Pixel_8'
 & $adb devices -l
 ```
 
+- 直接执行 `adb` 报错 `adb_utils.cpp:316 Cannot mkdir ... .android: Permission denied`：
+  - 当前 agent 沙箱内可能无权创建 ADB 运行目录
+  - 改为提权执行 `adb`、`connectedDebugAndroidTest` 等依赖 ADB 的命令
+- 出现 `InputManager.getInstance` 相关 Espresso 异常：
+  - 先检查 AndroidX Test 版本是否至少为 `androidx.test.ext:junit 1.3.0`
+  - 同时确认 `androidx.test.espresso:espresso-core` 至少为 `3.7.0`
 - 已看到设备但测试仍失败：
   - 先重新检查 `sys.boot_completed`、`bootanim`、`user_setup_complete`
   - 不要只根据模拟器窗口已经出现就认为设备可用
+  - 若设备状态正常但仍有断言失败，再看 `app/build/reports/androidTests/connected/debug/index.html`
