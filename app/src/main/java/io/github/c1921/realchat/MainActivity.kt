@@ -46,35 +46,15 @@ class MainActivity : ComponentActivity() {
                     onRequestCharacterCardExport = viewModel::requestCharacterCardExport,
                     onClearPendingCharacterCardExport = viewModel::clearPendingCharacterCardExport,
                     onCharacterCardExportCompleted = viewModel::onCharacterCardExportCompleted,
-                    onProviderTypeChange = viewModel::updateProviderType,
-                    onApiKeyChange = viewModel::updateApiKey,
-                    onModelChange = viewModel::updateModel,
-                    onBaseUrlChange = viewModel::updateBaseUrl,
-                    onPersonaNameChange = viewModel::updatePersonaName,
-                    onPersonaDescriptionChange = viewModel::updatePersonaDescription,
-                    onProactiveEnabledChange = viewModel::updateProactiveEnabled,
-                    onProactiveMinIntervalChange = { text ->
-                        text.toIntOrNull()?.let { viewModel.updateProactiveMinInterval(it) }
-                    },
-                    onProactiveMaxIntervalChange = { text ->
-                        text.toIntOrNull()?.let { viewModel.updateProactiveMaxInterval(it) }
-                    },
-                    onProactiveMaxCountChange = { text ->
-                        text.toIntOrNull()?.let { viewModel.updateProactiveMaxCount(it) }
-                    },
-                    onDirectorEnabledChange = viewModel::updateDirectorEnabled,
-                    onDirectorSystemPromptChange = viewModel::updateDirectorSystemPrompt,
-                    onMemoryEnabledChange = viewModel::updateMemoryEnabled,
-                    onMemoryTriggerCountChange = { text ->
-                        text.toIntOrNull()?.let { viewModel.updateMemoryTriggerCount(it) }
-                    },
-                    onMemoryKeepCountChange = { text ->
-                        text.toIntOrNull()?.let { viewModel.updateMemoryKeepCount(it) }
-                    },
-                    onDeveloperModeEnabledChange = viewModel::updateDeveloperModeEnabled,
+                    onOpenSettingsDetail = viewModel::openSettingsDetail,
+                    onApplyProviderSettings = viewModel::applyProviderSettings,
+                    onApplyPersonaSettings = viewModel::applyPersonaSettings,
+                    onApplyProactiveSettings = viewModel::applyProactiveSettings,
+                    onApplyDirectorSettings = viewModel::applyDirectorSettings,
+                    onApplyMemorySettings = viewModel::applyMemorySettings,
+                    onApplyDeveloperModeEnabled = viewModel::applyDeveloperModeEnabled,
                     onGetProactiveNextTriggerMs = viewModel::getProactiveNextTriggerMs,
-                    onGetProactiveSentCount = viewModel::getProactiveSentCount,
-                    onSaveSettings = viewModel::saveSettings
+                    onGetProactiveSentCount = viewModel::getProactiveSentCount
                 )
             }
         }

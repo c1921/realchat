@@ -232,7 +232,7 @@ fun ChatDetailScreen(
         ) {
             ConversationNoticeSection(
                 conversation = conversation,
-                invalidConfigText = "请先在设置中保存 API Key、模型和 Base URL。"
+                invalidConfigText = "请先在设置中填写 API Key、模型和 Base URL。"
             )
 
             if (settings.developerModeEnabled) {

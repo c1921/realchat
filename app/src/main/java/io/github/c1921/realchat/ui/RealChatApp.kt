@@ -19,6 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.c1921.realchat.model.DirectorSettings
+import io.github.c1921.realchat.model.MemorySettings
+import io.github.c1921.realchat.model.ProactiveSettings
+import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 
 @Composable
@@ -46,27 +50,18 @@ fun RealChatApp(
     onRequestCharacterCardExport: (Long) -> Unit,
     onClearPendingCharacterCardExport: () -> Unit,
     onCharacterCardExportCompleted: (String?) -> Unit,
-    onProviderTypeChange: (ProviderType) -> Unit,
-    onApiKeyChange: (String) -> Unit,
-    onModelChange: (String) -> Unit,
-    onBaseUrlChange: (String) -> Unit,
-    onPersonaNameChange: (String) -> Unit,
-    onPersonaDescriptionChange: (String) -> Unit,
-    onProactiveEnabledChange: (Boolean) -> Unit,
-    onProactiveMinIntervalChange: (String) -> Unit,
-    onProactiveMaxIntervalChange: (String) -> Unit,
-    onProactiveMaxCountChange: (String) -> Unit,
-    onDirectorEnabledChange: (Boolean) -> Unit,
-    onDirectorSystemPromptChange: (String) -> Unit,
-    onMemoryEnabledChange: (Boolean) -> Unit,
-    onMemoryTriggerCountChange: (String) -> Unit,
-    onMemoryKeepCountChange: (String) -> Unit,
-    onDeveloperModeEnabledChange: (Boolean) -> Unit,
+    onOpenSettingsDetail: (SettingsSection) -> Unit,
+    onApplyProviderSettings: suspend (ProviderType, Map<ProviderType, ProviderConfig>) -> String?,
+    onApplyPersonaSettings: suspend (String, String) -> String?,
+    onApplyProactiveSettings: suspend (ProactiveSettings) -> String?,
+    onApplyDirectorSettings: suspend (DirectorSettings) -> String?,
+    onApplyMemorySettings: suspend (MemorySettings) -> String?,
+    onApplyDeveloperModeEnabled: suspend (Boolean) -> String?,
     onGetProactiveNextTriggerMs: () -> Long,
-    onGetProactiveSentCount: () -> Int,
-    onSaveSettings: () -> Unit
+    onGetProactiveSentCount: () -> Int
 ) {
     val chatDetailScreen = uiState.secondaryScreen as? SecondaryScreen.ChatDetail
+    val settingsDetailScreen = uiState.secondaryScreen as? SecondaryScreen.SettingsDetail
     val context = LocalContext.current
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -115,7 +110,7 @@ fun RealChatApp(
 
     Scaffold(
         bottomBar = {
-            if (chatDetailScreen == null) {
+            if (uiState.secondaryScreen == null) {
                 NavigationBar {
                     AppScreen.entries.forEach { screen ->
                         NavigationBarItem(
@@ -179,24 +174,16 @@ fun RealChatApp(
 
             else -> SettingsScreen(
                 settings = uiState.settings,
+                activeSection = settingsDetailScreen?.section,
                 modifier = Modifier.padding(innerPadding),
-                onProviderTypeChange = onProviderTypeChange,
-                onApiKeyChange = onApiKeyChange,
-                onModelChange = onModelChange,
-                onBaseUrlChange = onBaseUrlChange,
-                onPersonaNameChange = onPersonaNameChange,
-                onPersonaDescriptionChange = onPersonaDescriptionChange,
-                onProactiveEnabledChange = onProactiveEnabledChange,
-                onProactiveMinIntervalChange = onProactiveMinIntervalChange,
-                onProactiveMaxIntervalChange = onProactiveMaxIntervalChange,
-                onProactiveMaxCountChange = onProactiveMaxCountChange,
-                onDirectorEnabledChange = onDirectorEnabledChange,
-                onDirectorSystemPromptChange = onDirectorSystemPromptChange,
-                onMemoryEnabledChange = onMemoryEnabledChange,
-                onMemoryTriggerCountChange = onMemoryTriggerCountChange,
-                onMemoryKeepCountChange = onMemoryKeepCountChange,
-                onDeveloperModeEnabledChange = onDeveloperModeEnabledChange,
-                onSaveSettings = onSaveSettings
+                onOpenSection = onOpenSettingsDetail,
+                onCloseSection = onCloseSecondaryScreen,
+                onApplyProviderSettings = onApplyProviderSettings,
+                onApplyPersonaSettings = onApplyPersonaSettings,
+                onApplyProactiveSettings = onApplyProactiveSettings,
+                onApplyDirectorSettings = onApplyDirectorSettings,
+                onApplyMemorySettings = onApplyMemorySettings,
+                onApplyDeveloperModeEnabled = onApplyDeveloperModeEnabled
             )
         }
     }

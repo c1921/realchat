@@ -56,8 +56,17 @@ enum class AppScreen {
     Settings
 }
 
+enum class SettingsSection {
+    Provider,
+    Persona,
+    Proactive,
+    Director,
+    Memory
+}
+
 sealed interface SecondaryScreen {
     data class ChatDetail(val conversationId: Long) : SecondaryScreen
+    data class SettingsDetail(val section: SettingsSection) : SecondaryScreen
 }
 
 enum class CharacterEditorField {
@@ -128,6 +137,7 @@ data class CharacterCardsUiState(
 
 data class SettingsUiState(
     val providerType: ProviderType = ProviderConfig.DEFAULT_PROVIDER_TYPE,
+    val providerConfigs: Map<ProviderType, ProviderConfig> = ProviderConfig.defaultsByProvider(),
     val apiKey: String = "",
     val model: String = ProviderConfig.DEFAULT_MODEL,
     val baseUrl: String = ProviderConfig.DEFAULT_BASE_URL,
@@ -143,8 +153,7 @@ data class SettingsUiState(
     val memoryTriggerCount: Int = 40,
     val memoryKeepCount: Int = 10,
     val developerModeEnabled: Boolean = false,
-    val errorText: String? = null,
-    val statusText: String? = null
+    val errorText: String? = null
 )
 
 data class MainUiState(
@@ -173,14 +182,9 @@ class ChatViewModel(
     private var activePreferences: AppPreferences = AppPreferences()
     private var activeAgentSettings: AgentSettings = AgentSettings()
     private var activeEmotionState: EmotionState = EmotionState()
-    private var providerDrafts: MutableMap<ProviderType, ProviderConfig> =
-        ProviderConfig.defaultsByProvider().toMutableMap()
     private var availableCards: List<CharacterCard> = emptyList()
     private var activeConversationBundle: ConversationWithMessages? = null
     private var activeConversationJob: Job? = null
-    private var lastAppliedSelectedProviderType: ProviderType? = null
-    private var lastAppliedProviderConfigs: Map<ProviderType, ProviderConfig>? = null
-    private var lastAppliedUserPersona: UserPersona? = null
     private var lastAppliedAgentSettings: AgentSettings? = null
 
     internal val proactiveController = ProactiveMessagingController(
@@ -210,6 +214,16 @@ class ChatViewModel(
             current.copy(
                 currentScreen = AppScreen.Conversations,
                 secondaryScreen = SecondaryScreen.ChatDetail(conversationId)
+            )
+        }
+    }
+
+    fun openSettingsDetail(section: SettingsSection) {
+        _uiState.update { current ->
+            current.copy(
+                currentScreen = AppScreen.Settings,
+                secondaryScreen = SecondaryScreen.SettingsDetail(section),
+                settings = current.settings.copy(errorText = null)
             )
         }
     }
@@ -351,271 +365,165 @@ class ChatViewModel(
         }
     }
 
-    fun updateApiKey(apiKey: String) {
-        updateCurrentProviderDraft { currentDraft ->
-            currentDraft.copy(apiKey = apiKey)
-        }
-    }
-
-    fun updateProviderType(providerType: ProviderType) {
-        val targetDraft = providerDraft(providerType)
-        _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    providerType = providerType,
-                    apiKey = targetDraft.apiKey,
-                    model = targetDraft.model,
-                    baseUrl = targetDraft.baseUrl,
-                    errorText = null,
-                    statusText = null
-                )
-            )
-        }
-    }
-
-    fun updateModel(model: String) {
-        updateCurrentProviderDraft { currentDraft ->
-            currentDraft.copy(model = model)
-        }
-    }
-
-    fun updateBaseUrl(baseUrl: String) {
-        updateCurrentProviderDraft { currentDraft ->
-            currentDraft.copy(baseUrl = baseUrl)
-        }
-    }
-
-    fun updatePersonaName(name: String) {
-        _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    personaName = name,
-                    errorText = null,
-                    statusText = null
-                )
-            )
-        }
-    }
-
-    fun updatePersonaDescription(description: String) {
-        _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    personaDescription = description,
-                    errorText = null,
-                    statusText = null
-                )
-            )
-        }
-    }
-
-    fun updateProactiveEnabled(enabled: Boolean) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(proactiveEnabled = enabled))
-        }
-    }
-
-    fun updateDeveloperModeEnabled(enabled: Boolean) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(developerModeEnabled = enabled))
-        }
-    }
-
     fun getProactiveNextTriggerMs(): Long = proactiveController.getNextTriggerMs()
 
     fun getProactiveSentCount(): Int = proactiveController.getSentCount()
 
-    fun updateProactiveMinInterval(minutes: Int) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(proactiveMinIntervalMinutes = minutes))
-        }
-    }
-
-    fun updateProactiveMaxInterval(minutes: Int) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(proactiveMaxIntervalMinutes = minutes))
-        }
-    }
-
-    fun updateProactiveMaxCount(count: Int) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(proactiveMaxCount = count))
-        }
-    }
-
-    fun updateDirectorEnabled(enabled: Boolean) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(directorEnabled = enabled))
-        }
-    }
-
-    fun updateDirectorSystemPrompt(prompt: String) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(directorSystemPrompt = prompt))
-        }
-    }
-
-    fun updateMemoryEnabled(enabled: Boolean) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(memoryEnabled = enabled))
-        }
-    }
-
-    fun updateMemoryTriggerCount(count: Int) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(memoryTriggerCount = count))
-        }
-    }
-
-    fun updateMemoryKeepCount(count: Int) {
-        _uiState.update { current ->
-            current.copy(settings = current.settings.copy(memoryKeepCount = count))
-        }
-    }
-
-    fun saveSettings() {
-        val form = uiState.value.settings
-        val selectedConfig = ProviderConfig(
-            providerType = form.providerType,
-            apiKey = form.apiKey,
-            model = form.model,
-            baseUrl = form.baseUrl
-        ).normalized()
-        providerDrafts[form.providerType] = selectedConfig
-        val providerConfigs = ProviderType.entries.associateWith { providerType ->
-            (providerDrafts[providerType] ?: ProviderConfig.defaultsFor(providerType))
+    suspend fun applyProviderSettings(
+        selectedProviderType: ProviderType,
+        providerConfigs: Map<ProviderType, ProviderConfig>
+    ): String? {
+        val normalizedConfigs = ProviderType.entries.associateWith { providerType ->
+            (providerConfigs[providerType] ?: ProviderConfig.defaultsFor(providerType))
                 .copy(providerType = providerType)
                 .normalized()
         }
-        val persona = UserPersona(
-            displayName = form.personaName,
-            description = form.personaDescription
-        ).normalized()
+        val selectedConfig = normalizedConfigs.getValue(selectedProviderType)
 
         if (selectedConfig.baseUrl.isNotEmpty()) {
             val endpoint = buildChatCompletionsUrl(selectedConfig.baseUrl)
             if (endpoint.toHttpUrlOrNull() == null) {
-                _uiState.update { current ->
-                    current.copy(
-                        settings = current.settings.copy(
-                            errorText = "Base URL 格式不正确。",
-                            statusText = null
-                        )
-                    )
-                }
-                return
+                return setSettingsError("Base URL 格式不正确。")
             }
         }
 
-        val agentSettings = AgentSettings(
-            proactive = ProactiveSettings(
-                enabled = form.proactiveEnabled,
-                minIntervalMinutes = form.proactiveMinIntervalMinutes.coerceAtLeast(3),
-                maxIntervalMinutes = form.proactiveMaxIntervalMinutes
-                    .coerceAtLeast(form.proactiveMinIntervalMinutes.coerceAtLeast(3)),
-                maxCount = form.proactiveMaxCount.coerceAtLeast(1)
-            ),
-            director = DirectorSettings(
-                enabled = form.directorEnabled,
-                systemPrompt = form.directorSystemPrompt
-            ),
-            memory = MemorySettings(
-                enabled = form.memoryEnabled,
-                triggerCount = form.memoryTriggerCount,
-                keepRecentCount = form.memoryKeepCount
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存 Provider 设置失败。"
+        ) {
+            appPreferencesRepository.saveProviderSettings(
+                selectedProviderType = selectedProviderType,
+                providerConfigs = normalizedConfigs
             )
+        }
+    }
+
+    suspend fun applyPersonaSettings(
+        personaName: String,
+        personaDescription: String
+    ): String? {
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存 Persona 设置失败。"
+        ) {
+            appPreferencesRepository.saveUserPersona(
+                UserPersona(
+                    displayName = personaName,
+                    description = personaDescription
+                ).normalized()
+            )
+        }
+    }
+
+    suspend fun applyProactiveSettings(settings: ProactiveSettings): String? {
+        if (settings.enabled) {
+            if (settings.minIntervalMinutes < 3) {
+                return setSettingsError("主动消息最短间隔不能小于 3 分钟。")
+            }
+            if (settings.maxIntervalMinutes < settings.minIntervalMinutes) {
+                return setSettingsError("主动消息最长间隔不能小于最短间隔。")
+            }
+            if (settings.maxCount < 1) {
+                return setSettingsError("主动消息最多发送次数不能小于 1。")
+            }
+        }
+
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存主动消息设置失败。"
+        ) {
+            appPreferencesRepository.saveAgentSettings(
+                activePreferences.agentSettings.copy(proactive = settings)
+            )
+        }
+    }
+
+    suspend fun applyDirectorSettings(settings: DirectorSettings): String? {
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存导演系统设置失败。"
+        ) {
+            appPreferencesRepository.saveAgentSettings(
+                activePreferences.agentSettings.copy(director = settings)
+            )
+        }
+    }
+
+    suspend fun applyMemorySettings(settings: MemorySettings): String? {
+        if (settings.enabled) {
+            if (settings.triggerCount < 1) {
+                return setSettingsError("记忆摘要触发阈值不能小于 1。")
+            }
+            if (settings.keepRecentCount < 1) {
+                return setSettingsError("记忆摘要保留消息数不能小于 1。")
+            }
+        }
+
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存记忆摘要设置失败。"
+        ) {
+            appPreferencesRepository.saveAgentSettings(
+                activePreferences.agentSettings.copy(memory = settings)
+            )
+        }
+    }
+
+    suspend fun applyDeveloperModeEnabled(enabled: Boolean): String? {
+        clearSettingsError()
+        return persistSettingsChange(
+            fallbackMessage = "保存开发者模式设置失败。"
+        ) {
+            appPreferencesRepository.saveDeveloperMode(enabled)
+        }
+    }
+
+    private suspend fun persistSettingsChange(
+        fallbackMessage: String,
+        save: suspend () -> Unit
+    ): String? {
+        return runCatching {
+            save()
+        }.fold(
+            onSuccess = { null },
+            onFailure = { throwable ->
+                setSettingsError(throwable.message ?: fallbackMessage)
+            }
         )
-
-        viewModelScope.launch {
-            runCatching {
-                appPreferencesRepository.saveProviderSettings(
-                    selectedProviderType = form.providerType,
-                    providerConfigs = providerConfigs
-                )
-                appPreferencesRepository.saveUserPersona(persona)
-                appPreferencesRepository.saveAgentSettings(agentSettings)
-                appPreferencesRepository.saveDeveloperMode(form.developerModeEnabled)
-            }.onSuccess {
-                providerDrafts = providerConfigs.toMutableMap()
-                _uiState.update { current ->
-                    current.copy(
-                        settings = current.settings.copy(
-                            providerType = selectedConfig.providerType,
-                            apiKey = selectedConfig.apiKey,
-                            model = selectedConfig.model,
-                            baseUrl = selectedConfig.baseUrl,
-                            personaName = persona.displayName,
-                            personaDescription = persona.description,
-                            errorText = null,
-                            statusText = "设置已保存。"
-                        ),
-                        conversation = current.conversation.copy(
-                            hasValidConfig = selectedConfig.hasRequiredFields(),
-                            errorText = null
-                        )
-                    )
-                }
-            }.onFailure { throwable ->
-                _uiState.update { current ->
-                    current.copy(
-                        settings = current.settings.copy(
-                            errorText = throwable.message ?: "保存设置失败。",
-                            statusText = null
-                        )
-                    )
-                }
-            }
-        }
     }
 
-    private fun updateCurrentProviderDraft(
-        transform: (ProviderConfig) -> ProviderConfig
-    ) {
-        val providerType = uiState.value.settings.providerType
-        val updatedDraft = transform(providerDraft(providerType))
-            .copy(providerType = providerType)
-        providerDrafts[providerType] = updatedDraft
+    private fun clearSettingsError() {
         _uiState.update { current ->
-            current.copy(
-                settings = current.settings.copy(
-                    apiKey = updatedDraft.apiKey,
-                    model = updatedDraft.model,
-                    baseUrl = updatedDraft.baseUrl,
-                    errorText = null,
-                    statusText = null
-                )
-            )
+            current.copy(settings = current.settings.copy(errorText = null))
         }
     }
 
-    private fun providerDraft(providerType: ProviderType): ProviderConfig {
-        return providerDrafts[providerType]
-            ?: ProviderConfig.defaultsFor(providerType)
+    private fun setSettingsError(message: String): String {
+        _uiState.update { current ->
+            current.copy(settings = current.settings.copy(errorText = message))
+        }
+        return message
     }
 
     private fun syncSettingsState(
-        current: SettingsUiState,
-        selectedProviderType: ProviderType,
-        userPersona: UserPersona,
-        agentSettings: AgentSettings,
-        developerModeEnabled: Boolean,
-        applyProviderDraft: Boolean
+        currentErrorText: String?,
+        preferences: AppPreferences
     ): SettingsUiState {
-        val settingsWithProvider = if (applyProviderDraft) {
-            val draft = providerDraft(selectedProviderType)
-            current.copy(
-                providerType = selectedProviderType,
-                apiKey = draft.apiKey,
-                model = draft.model,
-                baseUrl = draft.baseUrl
-            )
-        } else {
-            current
+        val providerConfigs = ProviderType.entries.associateWith { providerType ->
+            (preferences.providerConfigs[providerType] ?: ProviderConfig.defaultsFor(providerType))
+                .copy(providerType = providerType)
         }
+        val selectedConfig = providerConfigs.getValue(preferences.selectedProviderType)
+        val agentSettings = preferences.agentSettings
 
-        return settingsWithProvider.copy(
-            personaName = userPersona.displayName,
-            personaDescription = userPersona.description,
+        return SettingsUiState(
+            providerType = preferences.selectedProviderType,
+            providerConfigs = providerConfigs,
+            apiKey = selectedConfig.apiKey,
+            model = selectedConfig.model,
+            baseUrl = selectedConfig.baseUrl,
+            personaName = preferences.userPersona.displayName,
+            personaDescription = preferences.userPersona.description,
             proactiveEnabled = agentSettings.proactive.enabled,
             proactiveMinIntervalMinutes = agentSettings.proactive.minIntervalMinutes,
             proactiveMaxIntervalMinutes = agentSettings.proactive.maxIntervalMinutes,
@@ -625,7 +533,8 @@ class ChatViewModel(
             memoryEnabled = agentSettings.memory.enabled,
             memoryTriggerCount = agentSettings.memory.triggerCount,
             memoryKeepCount = agentSettings.memory.keepRecentCount,
-            developerModeEnabled = developerModeEnabled
+            developerModeEnabled = preferences.developerModeEnabled,
+            errorText = currentErrorText
         )
     }
 
@@ -887,7 +796,7 @@ class ChatViewModel(
             _uiState.update { current ->
                 current.copy(
                     conversation = current.conversation.copy(
-                        errorText = "请先在设置中保存 AI Provider、API Key、模型和 Base URL。"
+                        errorText = "请先在设置中填写 AI Provider、API Key、模型和 Base URL。"
                     )
                 )
             }
@@ -1150,19 +1059,8 @@ class ChatViewModel(
             appPreferencesRepository.observePreferences().collect { preferences ->
                 activePreferences = preferences
                 val normalizedConfig = preferences.providerConfig.normalized()
-                val providerChanged = lastAppliedSelectedProviderType != preferences.selectedProviderType ||
-                    lastAppliedProviderConfigs != preferences.providerConfigs
-                val personaChanged = lastAppliedUserPersona != preferences.userPersona
                 val agentSettingsChanged = lastAppliedAgentSettings != preferences.agentSettings
-                lastAppliedSelectedProviderType = preferences.selectedProviderType
-                lastAppliedProviderConfigs = preferences.providerConfigs
-                lastAppliedUserPersona = preferences.userPersona
                 lastAppliedAgentSettings = preferences.agentSettings
-                if (providerChanged) {
-                    providerDrafts = preferences.providerConfigs.mapValuesTo(mutableMapOf()) { (providerType, config) ->
-                        config.copy(providerType = providerType)
-                    }
-                }
                 if (agentSettingsChanged) {
                     activeAgentSettings = preferences.agentSettings
                     (directorService as? OpenAiCompatibleDirectorService)
@@ -1176,24 +1074,14 @@ class ChatViewModel(
                     }
                 }
                 _uiState.update { current ->
-                    val syncedSettings = if (providerChanged || personaChanged || agentSettingsChanged) {
-                        syncSettingsState(
-                            current = current.settings,
-                            selectedProviderType = preferences.selectedProviderType,
-                            userPersona = preferences.userPersona,
-                            agentSettings = preferences.agentSettings,
-                            developerModeEnabled = preferences.developerModeEnabled,
-                            applyProviderDraft = providerChanged
-                        )
-                    } else {
-                        current.settings
-                    }
-
                     current.copy(
                         conversation = current.conversation.copy(
                             hasValidConfig = normalizedConfig.hasRequiredFields()
                         ),
-                        settings = syncedSettings
+                        settings = syncSettingsState(
+                            currentErrorText = current.settings.errorText,
+                            preferences = preferences
+                        )
                     )
                 }
             }
@@ -1252,6 +1140,7 @@ class ChatViewModel(
                             }
                         }
 
+                        is SecondaryScreen.SettingsDetail -> activeSecondary
                         null -> null
                     }
 

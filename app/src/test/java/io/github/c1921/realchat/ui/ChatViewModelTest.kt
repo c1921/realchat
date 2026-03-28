@@ -20,6 +20,8 @@ import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.DirectorGuidance
 import io.github.c1921.realchat.model.EmotionState
+import io.github.c1921.realchat.model.MemorySettings
+import io.github.c1921.realchat.model.ProactiveSettings
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +38,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -170,14 +173,13 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun updateProviderType_switchesBetweenProviderSpecificDrafts() = runTest {
+    fun openSettingsDetail_keepsSecondaryScreenUntilClosed() = runTest {
         val card = CharacterCard(
             id = 1L,
             name = "Alice"
         )
-        val preferencesRepository = FakeAppPreferencesRepository()
         val viewModel = ChatViewModel(
-            appPreferencesRepository = preferencesRepository,
+            appPreferencesRepository = FakeAppPreferencesRepository(),
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
             conversationRepository = FakeConversationRepository(emptyList()),
             chatProvider = FakeChatProvider(),
@@ -188,31 +190,22 @@ class ChatViewModelTest {
         )
 
         advanceUntilIdle()
-        viewModel.updateApiKey("deepseek-key")
-        viewModel.updateProviderType(ProviderType.OPENAI)
-        viewModel.updateApiKey("openai-key")
-        viewModel.updateModel("gpt-4o-mini")
-        viewModel.updateProviderType(ProviderType.DEEPSEEK)
+        viewModel.openSettingsDetail(SettingsSection.Proactive)
         advanceUntilIdle()
 
-        val settings = viewModel.uiState.value.settings
-        assertEquals(ProviderType.DEEPSEEK, settings.providerType)
-        assertEquals("deepseek-key", settings.apiKey)
-        assertEquals(ProviderConfig.DEFAULT_MODEL, settings.model)
-        assertEquals(ProviderConfig.DEFAULT_BASE_URL, settings.baseUrl)
+        assertEquals(
+            SecondaryScreen.SettingsDetail(SettingsSection.Proactive),
+            viewModel.uiState.value.secondaryScreen
+        )
 
-        viewModel.updateProviderType(ProviderType.OPENAI)
+        viewModel.closeSecondaryScreen()
         advanceUntilIdle()
 
-        val openAiSettings = viewModel.uiState.value.settings
-        assertEquals(ProviderType.OPENAI, openAiSettings.providerType)
-        assertEquals("openai-key", openAiSettings.apiKey)
-        assertEquals("gpt-4o-mini", openAiSettings.model)
-        assertEquals("https://api.openai.com/v1", openAiSettings.baseUrl)
+        assertNull(viewModel.uiState.value.secondaryScreen)
     }
 
     @Test
-    fun saveSettings_persistsAllProviderDrafts() = runTest {
+    fun applyProviderSettings_persistsSelectedProviderAndConfigs() = runTest {
         val card = CharacterCard(
             id = 1L,
             name = "Alice"
@@ -230,13 +223,21 @@ class ChatViewModelTest {
         )
 
         advanceUntilIdle()
-        viewModel.updateApiKey("deepseek-key")
-        viewModel.updateProviderType(ProviderType.OPENAI)
-        viewModel.updateApiKey("openai-key")
-        viewModel.updateModel("gpt-4o-mini")
-        viewModel.saveSettings()
+        val providerConfigs = preferencesRepository.preferences.value.providerConfigs.toMutableMap().apply {
+            this[ProviderType.DEEPSEEK] = getValue(ProviderType.DEEPSEEK).copy(apiKey = "deepseek-key")
+            this[ProviderType.OPENAI] = getValue(ProviderType.OPENAI).copy(
+                apiKey = "openai-key",
+                model = "gpt-4o-mini"
+            )
+        }
+
+        val error = viewModel.applyProviderSettings(
+            selectedProviderType = ProviderType.OPENAI,
+            providerConfigs = providerConfigs
+        )
         advanceUntilIdle()
 
+        assertNull(error)
         assertEquals(ProviderType.OPENAI, preferencesRepository.preferences.value.selectedProviderType)
         assertEquals(ProviderType.OPENAI, viewModel.uiState.value.settings.providerType)
         assertEquals("https://api.openai.com/v1", preferencesRepository.preferences.value.providerConfig.baseUrl)
@@ -252,6 +253,113 @@ class ChatViewModelTest {
                 .getValue(ProviderType.OPENAI)
                 .apiKey
         )
+        assertEquals(
+            "gpt-4o-mini",
+            viewModel.uiState.value.settings.providerConfigs
+                .getValue(ProviderType.OPENAI)
+                .model
+        )
+    }
+
+    @Test
+    fun applyProviderSettings_rejectsInvalidBaseUrl() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val preferencesRepository = FakeAppPreferencesRepository()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        val invalidConfigs = preferencesRepository.preferences.value.providerConfigs.toMutableMap().apply {
+            this[ProviderType.OPENAI] = getValue(ProviderType.OPENAI).copy(baseUrl = "not-a-url")
+        }
+
+        val error = viewModel.applyProviderSettings(
+            selectedProviderType = ProviderType.OPENAI,
+            providerConfigs = invalidConfigs
+        )
+        advanceUntilIdle()
+
+        assertEquals("Base URL 格式不正确。", error)
+        assertEquals(ProviderType.DEEPSEEK, preferencesRepository.preferences.value.selectedProviderType)
+        assertEquals("Base URL 格式不正确。", viewModel.uiState.value.settings.errorText)
+    }
+
+    @Test
+    fun applyProactiveSettings_updatesUiAndRepository() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val preferencesRepository = FakeAppPreferencesRepository()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        val error = viewModel.applyProactiveSettings(
+            ProactiveSettings(
+                enabled = true,
+                minIntervalMinutes = 45,
+                maxIntervalMinutes = 90,
+                maxCount = 3
+            )
+        )
+        advanceUntilIdle()
+
+        assertNull(error)
+        assertEquals(45, preferencesRepository.preferences.value.agentSettings.proactive.minIntervalMinutes)
+        assertEquals(90, viewModel.uiState.value.settings.proactiveMaxIntervalMinutes)
+        assertTrue(viewModel.uiState.value.settings.proactiveEnabled)
+    }
+
+    @Test
+    fun applyMemorySettings_rejectsInvalidThreshold() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val preferencesRepository = FakeAppPreferencesRepository()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(emptyList()),
+            chatProvider = FakeChatProvider(),
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        val error = viewModel.applyMemorySettings(
+            MemorySettings(
+                enabled = true,
+                triggerCount = 0,
+                keepRecentCount = 10
+            )
+        )
+        advanceUntilIdle()
+
+        assertEquals("记忆摘要触发阈值不能小于 1。", error)
+        assertEquals(40, preferencesRepository.preferences.value.agentSettings.memory.triggerCount)
     }
 }
 
