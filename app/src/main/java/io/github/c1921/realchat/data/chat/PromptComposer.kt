@@ -4,7 +4,6 @@ import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.DirectorGuidance
-import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.UserPersona
 
 class PromptComposer {
@@ -13,8 +12,7 @@ class PromptComposer {
         userPersona: UserPersona,
         conversationMessages: List<ChatMessage>,
         directorGuidance: DirectorGuidance? = null,
-        proactiveCatalyst: String? = null,
-        emotionState: EmotionState = EmotionState()
+        proactiveCatalyst: String? = null
     ): List<ChatMessage> {
         val snapshot = characterSnapshot?.normalized()
         val normalizedPersona = userPersona.normalized()
@@ -42,13 +40,6 @@ class PromptComposer {
             requestMessages += ChatMessage(
                 role = ChatRole.System,
                 content = personaBlock
-            )
-        }
-
-        buildEmotionBlock(snapshot, emotionState)?.let { emotionBlock ->
-            requestMessages += ChatMessage(
-                role = ChatRole.System,
-                content = emotionBlock
             )
         }
 
@@ -112,15 +103,6 @@ class PromptComposer {
                 append("设定：${userPersona.description}")
             }
         }.trim()
-    }
-
-    private fun buildEmotionBlock(
-        snapshot: CharacterCardSnapshot?,
-        emotionState: EmotionState
-    ): String? {
-        snapshot ?: return null
-        val characterName = snapshot.effectiveName()
-        return "当前 $characterName 状态：好感度 ${emotionState.affection}/100，心情 ${emotionState.mood}/5"
     }
 
     private fun buildDirectorGuidanceBlock(guidance: DirectorGuidance?): String? {

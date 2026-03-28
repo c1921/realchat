@@ -4,7 +4,6 @@ import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.DirectorGuidance
-import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.UserPersona
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -98,19 +97,15 @@ class PromptComposerTest {
     }
 
     @Test
-    fun compose_withEmotionState_includesEmotionBlock() {
-        val emotion = EmotionState(affection = 75, mood = 2)
+    fun compose_doesNotIncludeEmotionBlock() {
         val result = composer.compose(
             characterSnapshot = snapshot,
             userPersona = persona,
-            conversationMessages = history,
-            emotionState = emotion
+            conversationMessages = history
         )
 
-        val emotionBlock = result.firstOrNull {
-            it.role == ChatRole.System && it.content.contains("好感度") && it.content.contains("75")
-        }
-        assertTrue("emotion block should be present", emotionBlock != null)
+        assertFalse(result.any { it.role == ChatRole.System && it.content.contains("好感度") })
+        assertFalse(result.any { it.role == ChatRole.System && it.content.contains("心情") })
     }
 
     @Test

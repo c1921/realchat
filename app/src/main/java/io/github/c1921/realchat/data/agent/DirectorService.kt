@@ -85,6 +85,6 @@ class OpenAiCompatibleDirectorService(
             "你是叙事导演。根据对话历史和角色 {{char}} 当前情绪（好感度:{{affection}}/100，心情:{{mood}}/5），" +
                 "输出 JSON 指导下一条回复：" +
                 "{\"mood\":\"<氛围>\",\"topic_direction\":\"<话题走向>\",\"avoid\":\"<避免的内容>\",\"pursue\":\"<推进的内容>\"}" +
-                "只输出 JSON，不要解释。"
+                "只输出用于指导回复方向的 JSON，不要复述底层分数、数值变化或“状态更新”说明，不要解释。"
     }
 }

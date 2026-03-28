@@ -914,8 +914,7 @@ class ChatViewModel(
             userPersona = activePreferences.userPersona,
             conversationMessages = historyMessages,
             directorGuidance = guidance,
-            proactiveCatalyst = catalyst,
-            emotionState = activeEmotionState
+            proactiveCatalyst = catalyst
         )
 
         chatProvider.send(

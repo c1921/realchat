@@ -39,6 +39,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -424,6 +425,50 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun sendMessage_doesNotExposeEmotionStateToChatProvider() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 100L,
+                emotionState = EmotionState(affection = 75, mood = 2)
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "你好")
+            )
+        )
+        val chatProvider = FakeChatProvider()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = FakeAppPreferencesRepository(),
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = chatProvider,
+            promptComposer = PromptComposer(),
+            directorService = FakeDirectorService(),
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+        viewModel.updateDraft("继续")
+        advanceUntilIdle()
+        viewModel.sendMessage()
+        advanceUntilIdle()
+
+        val requestMessages = chatProvider.lastMessages
+        assertTrue(requestMessages.isNotEmpty())
+        assertFalse(requestMessages.any { it.content.contains("好感度") })
+        assertFalse(requestMessages.any { it.content.contains("心情") })
+        assertFalse(requestMessages.any { it.content.contains("affection") })
+        assertFalse(requestMessages.any { it.content.contains("mood") })
+    }
+
+    @Test
     fun sendMessage_fallsBackToRawDirectorOutputHint() = runTest {
         val card = CharacterCard(
             id = 1L,
@@ -758,10 +803,13 @@ private class FakeConversationRepository(
 }
 
 private class FakeChatProvider : ChatProvider {
+    var lastMessages: List<ChatMessage> = emptyList()
+
     override suspend fun send(
         messages: List<ChatMessage>,
         config: ProviderConfig
     ): Result<ChatMessage> {
+        lastMessages = messages
         return Result.success(ChatMessage(ChatRole.Assistant, "ok"))
     }
 }
