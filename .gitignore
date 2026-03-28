@@ -10,3 +10,17 @@
 .kotlin
 local.properties
 .claude
+
+# Gradle / Android build outputs
+/build/
+/app/build/
+
+# APK / AAB
+*.apk
+*.aab
+
+# Android Studio build metadata
+output-metadata.json
+
+# generated profile-related artifacts
+*.dm
