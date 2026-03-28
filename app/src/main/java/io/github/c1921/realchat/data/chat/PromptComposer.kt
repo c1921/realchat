@@ -4,6 +4,8 @@ import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.DirectorGuidance
+import io.github.c1921.realchat.model.ProactiveAction
+import io.github.c1921.realchat.model.ProactiveInstruction
 import io.github.c1921.realchat.model.UserPersona
 
 class PromptComposer {
@@ -12,7 +14,7 @@ class PromptComposer {
         userPersona: UserPersona,
         conversationMessages: List<ChatMessage>,
         directorGuidance: DirectorGuidance? = null,
-        proactiveCatalyst: String? = null
+        proactiveInstruction: ProactiveInstruction? = null
     ): List<ChatMessage> {
         val snapshot = characterSnapshot?.normalized()
         val normalizedPersona = userPersona.normalized()
@@ -52,6 +54,13 @@ class PromptComposer {
 
         requestMessages += conversationMessages
 
+        buildProactiveInstructionBlock(snapshot, normalizedPersona, proactiveInstruction)?.let { block ->
+            requestMessages += ChatMessage(
+                role = ChatRole.System,
+                content = block
+            )
+        }
+
         buildDirectorGuidanceBlock(directorGuidance)?.let { guidanceBlock ->
             requestMessages += ChatMessage(
                 role = ChatRole.System,
@@ -69,13 +78,6 @@ class PromptComposer {
                 original = DEFAULT_POST_HISTORY_INSTRUCTIONS
             )
         )
-
-        proactiveCatalyst?.takeUnless { it.isBlank() }?.let { catalyst ->
-            requestMessages += ChatMessage(
-                role = ChatRole.User,
-                content = catalyst
-            )
-        }
 
         return requestMessages
     }
@@ -115,6 +117,41 @@ class PromptComposer {
         }
         if (parts.isEmpty()) return null
         return "导演指示：${parts.joinToString("，")}"
+    }
+
+    private fun buildProactiveInstructionBlock(
+        snapshot: CharacterCardSnapshot?,
+        userPersona: UserPersona,
+        instruction: ProactiveInstruction?
+    ): String? {
+        instruction ?: return null
+        if (instruction.action == ProactiveAction.WAIT_FOR_USER) {
+            return null
+        }
+        val characterName = snapshot?.effectiveName()
+            .orEmpty()
+            .ifBlank { CharacterCardSnapshot.DEFAULT_CHARACTER_NAME }
+        val userName = userPersona.displayNameOrFallback()
+        val actionLine = when (instruction.action) {
+            ProactiveAction.CONTINUE_CURRENT_THREAD ->
+                "优先延续上一轮尚未自然结束的话题，或回应仍悬而未决的内容。"
+
+            ProactiveAction.START_NEW_TOPIC ->
+                "上一轮对话可视为自然收束，请由 $characterName 主动开启一个新话题。"
+
+            ProactiveAction.WAIT_FOR_USER -> return null
+        }
+
+        return buildString {
+            appendLine("主动消息指令")
+            appendLine("当前没有来自 $userName 的新消息，这一轮需要由 $characterName 主动发起一条消息。")
+            appendLine("不要把这轮回复写成 $userName 刚刚发来消息，也不要写成 $userName 在催促。")
+            append(actionLine)
+            if (instruction.timeCue.isNotBlank()) {
+                appendLine()
+                append("时间表达：${instruction.timeCue}")
+            }
+        }.trim()
     }
 
     private fun buildExampleBlock(

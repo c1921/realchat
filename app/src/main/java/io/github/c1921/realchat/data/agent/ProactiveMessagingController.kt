@@ -7,9 +7,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
+enum class ProactiveTriggerResult {
+    SENT,
+    PAUSE_UNTIL_USER_REPLY,
+    RETRY_LATER
+}
+
 class ProactiveMessagingController(
     private val scope: CoroutineScope,
-    private val onTrigger: suspend (elapsedMs: Long) -> Unit
+    private val onTrigger: suspend (elapsedMs: Long) -> ProactiveTriggerResult
 ) {
     private var timerJob: Job? = null
 
@@ -29,35 +35,23 @@ class ProactiveMessagingController(
         this.lastMessageTimestampMs = lastMessageTimestampMs
         this.currentSettings = settings
         stop()
-        scheduleNext(settings)
+        if (sentCount >= settings.maxCount) {
+            nextTriggerMs = Long.MAX_VALUE
+            return
+        }
+        scheduleNext(baseTimestampMs = this.lastMessageTimestampMs, settings = settings)
         timerJob = scope.launch {
             // 立即检查一次，处理应用关闭期间已到期的情况
             val nowAtStart = System.currentTimeMillis()
             if (nowAtStart >= nextTriggerMs && sentCount < settings.maxCount) {
-                val elapsed = nowAtStart - this@ProactiveMessagingController.lastMessageTimestampMs
-                this@ProactiveMessagingController.lastMessageTimestampMs = nowAtStart
-                sentCount++
-                if (sentCount < settings.maxCount) {
-                    scheduleNext(settings)
-                } else {
-                    nextTriggerMs = Long.MAX_VALUE
-                }
-                onTrigger(elapsed)
+                handleTrigger(nowMs = nowAtStart, settings = settings)
             }
             while (true) {
                 delay(CHECK_INTERVAL_MS)
                 if (sentCount >= settings.maxCount) break
                 val now = System.currentTimeMillis()
                 if (now >= nextTriggerMs) {
-                    val elapsed = now - this@ProactiveMessagingController.lastMessageTimestampMs
-                    this@ProactiveMessagingController.lastMessageTimestampMs = now
-                    sentCount++
-                    if (sentCount < settings.maxCount) {
-                        scheduleNext(settings)
-                    } else {
-                        nextTriggerMs = Long.MAX_VALUE
-                    }
-                    onTrigger(elapsed)
+                    handleTrigger(nowMs = now, settings = settings)
                 }
             }
         }
@@ -71,7 +65,7 @@ class ProactiveMessagingController(
 
     fun resetCount() {
         sentCount = 0
-        scheduleNext(currentSettings)
+        scheduleNext(baseTimestampMs = lastMessageTimestampMs, settings = currentSettings)
     }
 
     fun updateLastMessageTimestamp(ms: Long) {
@@ -82,11 +76,35 @@ class ProactiveMessagingController(
 
     fun getSentCount(): Int = sentCount
 
-    private fun scheduleNext(settings: ProactiveSettings) {
+    private suspend fun handleTrigger(nowMs: Long, settings: ProactiveSettings) {
+        val elapsed = nowMs - lastMessageTimestampMs
+        when (onTrigger(elapsed)) {
+            ProactiveTriggerResult.SENT -> {
+                lastMessageTimestampMs = nowMs
+                sentCount++
+                if (sentCount < settings.maxCount) {
+                    scheduleNext(baseTimestampMs = nowMs, settings = settings)
+                } else {
+                    nextTriggerMs = Long.MAX_VALUE
+                }
+            }
+
+            ProactiveTriggerResult.PAUSE_UNTIL_USER_REPLY -> {
+                sentCount = settings.maxCount
+                nextTriggerMs = Long.MAX_VALUE
+            }
+
+            ProactiveTriggerResult.RETRY_LATER -> {
+                scheduleNext(baseTimestampMs = nowMs, settings = settings)
+            }
+        }
+    }
+
+    private fun scheduleNext(baseTimestampMs: Long, settings: ProactiveSettings) {
         val minMs = settings.minIntervalMs
         val maxMs = maxOf(settings.maxIntervalMs, minMs)
         val intervalMs = if (maxMs > minMs) Random.nextLong(minMs, maxMs + 1) else minMs
-        nextTriggerMs = lastMessageTimestampMs + intervalMs
+        nextTriggerMs = baseTimestampMs + intervalMs
     }
 
     companion object {

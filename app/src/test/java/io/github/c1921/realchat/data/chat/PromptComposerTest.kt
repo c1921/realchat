@@ -4,6 +4,8 @@ import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.DirectorGuidance
+import io.github.c1921.realchat.model.ProactiveAction
+import io.github.c1921.realchat.model.ProactiveInstruction
 import io.github.c1921.realchat.model.UserPersona
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -79,21 +81,28 @@ class PromptComposerTest {
     }
 
     @Test
-    fun compose_withProactiveCatalyst_appendsCatalystAfterPostHistory() {
-        val catalyst = "主动发起新话题"
+    fun compose_withProactiveInstruction_insertsSystemBlockBeforePostHistory() {
+        val instruction = ProactiveInstruction(
+            action = ProactiveAction.START_NEW_TOPIC,
+            timeCue = "有一阵子没联系了"
+        )
         val result = composer.compose(
             characterSnapshot = snapshot,
             userPersona = persona,
             conversationMessages = history,
-            proactiveCatalyst = catalyst
+            proactiveInstruction = instruction
         )
 
-        assertEquals(ChatRole.User, result.last().role)
-        assertTrue(result.last().content.contains(catalyst))
+        val proactiveIndex = result.indexOfFirst {
+            it.role == ChatRole.System && it.content.contains("主动消息指令")
+        }
         val postHistoryIndex = result.indexOfFirst {
             it.role == ChatRole.System && it.content.contains("只输出 Alice 的回复")
         }
-        assertTrue(postHistoryIndex < result.lastIndex)
+        assertTrue(proactiveIndex in 0 until postHistoryIndex)
+        assertTrue(result[proactiveIndex].content.contains("当前没有来自 Bob 的新消息"))
+        assertTrue(result[proactiveIndex].content.contains("主动开启一个新话题"))
+        assertTrue(result[proactiveIndex].content.contains("有一阵子没联系了"))
     }
 
     @Test
@@ -109,16 +118,16 @@ class PromptComposerTest {
     }
 
     @Test
-    fun compose_withNullGuidanceAndNullCatalyst_producesNoDirectorOrCatalystMessages() {
+    fun compose_withNullGuidanceAndNullProactiveInstruction_producesNoDirectorOrProactiveMessages() {
         val result = composer.compose(
             characterSnapshot = snapshot,
             userPersona = persona,
             conversationMessages = history,
             directorGuidance = null,
-            proactiveCatalyst = null
+            proactiveInstruction = null
         )
 
         assertFalse(result.any { it.content.contains("导演指示") })
-        assertFalse(result.any { it.content.contains("主动发起") })
+        assertFalse(result.any { it.content.contains("主动消息指令") })
     }
 }

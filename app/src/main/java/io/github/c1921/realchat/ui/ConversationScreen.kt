@@ -238,6 +238,7 @@ fun ChatDetailScreen(
             if (settings.developerModeEnabled) {
                 DevDebugPanel(
                     proactiveEnabled = settings.proactiveEnabled,
+                    directorEnabled = settings.directorEnabled,
                     proactiveMaxCount = settings.proactiveMaxCount,
                     onGetNextTriggerMs = onGetProactiveNextTriggerMs,
                     onGetSentCount = onGetProactiveSentCount
@@ -882,6 +883,7 @@ internal fun SupportText(
 @Composable
 private fun DevDebugPanel(
     proactiveEnabled: Boolean,
+    directorEnabled: Boolean,
     proactiveMaxCount: Int,
     onGetNextTriggerMs: () -> Long,
     onGetSentCount: () -> Int
@@ -895,8 +897,12 @@ private fun DevDebugPanel(
                 val sentCount = onGetSentCount()
                 val nextTriggerMs = onGetNextTriggerMs()
                 val remaining = nextTriggerMs - System.currentTimeMillis()
-                countdownText = if (sentCount >= proactiveMaxCount) {
+                countdownText = if (!directorEnabled) {
+                    "主动消息: 未运行（需启用导演系统）"
+                } else if (sentCount >= proactiveMaxCount) {
                     "主动消息: 已达上限（等待用户回复）"
+                } else if (nextTriggerMs == Long.MAX_VALUE) {
+                    "主动消息: 未运行"
                 } else if (remaining > 0) {
                     val totalSeconds = remaining / 1000
                     val mm = totalSeconds / 60

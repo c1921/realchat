@@ -22,6 +22,8 @@ import io.github.c1921.realchat.model.DirectorGuidance
 import io.github.c1921.realchat.model.DirectorSettings
 import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.MemorySettings
+import io.github.c1921.realchat.model.ProactiveAction
+import io.github.c1921.realchat.model.ProactiveDirectorDecision
 import io.github.c1921.realchat.model.ProactiveSettings
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
@@ -568,6 +570,130 @@ class ChatViewModelTest {
         assertEquals(1, directorService.callCount)
         assertTrue(viewModel.uiState.value.conversation.directorGuidanceHints.isEmpty())
     }
+
+    @Test
+    fun proactiveTrigger_usesSystemInstructionInsteadOfUserCatalyst() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 0L
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "上次聊到一半。")
+            )
+        )
+        val preferencesRepository = FakeAppPreferencesRepository().also { repository ->
+            repository.preferences.update { current ->
+                current.copy(
+                    agentSettings = current.agentSettings.copy(
+                        proactive = ProactiveSettings(
+                            enabled = true,
+                            minIntervalMinutes = 0,
+                            maxIntervalMinutes = 0,
+                            maxCount = 1
+                        ),
+                        director = DirectorSettings(enabled = true)
+                    )
+                )
+            }
+        }
+        val directorService = FakeDirectorService(
+            proactiveResult = Result.success(
+                ProactiveDirectorDecision(
+                    action = ProactiveAction.START_NEW_TOPIC,
+                    mood = "轻松",
+                    topicDirection = "换个轻松话题",
+                    pursue = "自然问候",
+                    timeCue = "有一阵子没联系了"
+                )
+            )
+        )
+        val chatProvider = FakeChatProvider()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = chatProvider,
+            promptComposer = PromptComposer(),
+            directorService = directorService,
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(0, directorService.callCount)
+        assertEquals(1, directorService.proactiveCallCount)
+        assertEquals(1, chatProvider.sendCallCount)
+        assertTrue(chatProvider.lastMessages.any { it.role == ChatRole.System && it.content.contains("主动消息指令") })
+        assertTrue(chatProvider.lastMessages.any { it.role == ChatRole.System && it.content.contains("当前没有来自") })
+        assertTrue(chatProvider.lastMessages.any { it.role == ChatRole.System && it.content.contains("主动开启一个新话题") })
+        assertFalse(chatProvider.lastMessages.any { it.role == ChatRole.User && it.content.contains("主动发起") })
+    }
+
+    @Test
+    fun proactiveTrigger_waitForUser_skipsChatRequestAndPausesUntilReply() = runTest {
+        val card = CharacterCard(
+            id = 1L,
+            name = "Alice"
+        )
+        val bundle = ConversationWithMessages(
+            conversation = Conversation(
+                id = 10L,
+                characterCardId = card.id,
+                characterSnapshot = card.toSnapshot(),
+                updatedAt = 0L
+            ),
+            messages = listOf(
+                ChatMessage(ChatRole.Assistant, "等你回我。")
+            )
+        )
+        val preferencesRepository = FakeAppPreferencesRepository().also { repository ->
+            repository.preferences.update { current ->
+                current.copy(
+                    agentSettings = current.agentSettings.copy(
+                        proactive = ProactiveSettings(
+                            enabled = true,
+                            minIntervalMinutes = 0,
+                            maxIntervalMinutes = 0,
+                            maxCount = 1
+                        ),
+                        director = DirectorSettings(enabled = true)
+                    )
+                )
+            }
+        }
+        val directorService = FakeDirectorService(
+            proactiveResult = Result.success(
+                ProactiveDirectorDecision(action = ProactiveAction.WAIT_FOR_USER)
+            )
+        )
+        val chatProvider = FakeChatProvider()
+        val viewModel = ChatViewModel(
+            appPreferencesRepository = preferencesRepository,
+            characterCardRepository = FakeCharacterCardRepository(listOf(card)),
+            conversationRepository = FakeConversationRepository(listOf(bundle)),
+            chatProvider = chatProvider,
+            promptComposer = PromptComposer(),
+            directorService = directorService,
+            emotionUpdater = FakeEmotionUpdater(),
+            memorySummarizer = FakeMemorySummarizer()
+        )
+
+        advanceUntilIdle()
+
+        assertEquals(1, directorService.proactiveCallCount)
+        assertEquals(0, chatProvider.sendCallCount)
+        assertEquals(1, viewModel.getProactiveSentCount())
+        assertEquals(Long.MAX_VALUE, viewModel.getProactiveNextTriggerMs())
+        assertEquals(listOf(ChatMessage(ChatRole.Assistant, "等你回我。")), viewModel.uiState.value.conversation.messages)
+    }
 }
 
 private class FakeAppPreferencesRepository(
@@ -804,20 +930,25 @@ private class FakeConversationRepository(
 
 private class FakeChatProvider : ChatProvider {
     var lastMessages: List<ChatMessage> = emptyList()
+    var sendCallCount = 0
 
     override suspend fun send(
         messages: List<ChatMessage>,
         config: ProviderConfig
     ): Result<ChatMessage> {
+        sendCallCount++
         lastMessages = messages
         return Result.success(ChatMessage(ChatRole.Assistant, "ok"))
     }
 }
 
 private class FakeDirectorService(
-    private val result: Result<DirectorGuidance> = Result.failure(RuntimeException("director disabled"))
+    private val result: Result<DirectorGuidance> = Result.failure(RuntimeException("director disabled")),
+    private val proactiveResult: Result<ProactiveDirectorDecision> =
+        Result.failure(RuntimeException("proactive director disabled"))
 ) : DirectorService {
     var callCount = 0
+    var proactiveCallCount = 0
 
     override suspend fun analyze(
         snapshot: CharacterCardSnapshot?,
@@ -829,6 +960,16 @@ private class FakeDirectorService(
         return result
     }
 
+    override suspend fun analyzeProactive(
+        snapshot: CharacterCardSnapshot?,
+        emotionState: EmotionState,
+        conversationMessages: List<ChatMessage>,
+        elapsedMs: Long,
+        config: ProviderConfig
+    ): Result<ProactiveDirectorDecision> {
+        proactiveCallCount++
+        return proactiveResult
+    }
 }
 
 private class FakeEmotionUpdater(

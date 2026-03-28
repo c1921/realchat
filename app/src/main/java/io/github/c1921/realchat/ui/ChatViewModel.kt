@@ -11,6 +11,7 @@ import io.github.c1921.realchat.data.agent.OpenAiCompatibleDirectorService
 import io.github.c1921.realchat.data.agent.OpenAiCompatibleEmotionUpdater
 import io.github.c1921.realchat.data.agent.OpenAiCompatibleMemorySummarizer
 import io.github.c1921.realchat.data.agent.ProactiveMessagingController
+import io.github.c1921.realchat.data.agent.ProactiveTriggerResult
 import io.github.c1921.realchat.data.character.CharacterCardExportPayload
 import io.github.c1921.realchat.data.character.CharacterCardRepository
 import io.github.c1921.realchat.data.character.RoomCharacterCardRepository
@@ -37,6 +38,9 @@ import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.DirectorGuidance
 import io.github.c1921.realchat.model.EmotionState
+import io.github.c1921.realchat.model.ProactiveAction
+import io.github.c1921.realchat.model.ProactiveDirectorDecision
+import io.github.c1921.realchat.model.ProactiveInstruction
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
 import io.github.c1921.realchat.model.UserPersona
@@ -820,58 +824,77 @@ class ChatViewModel(
         }
 
         viewModelScope.launch {
-            sendMessageInternal(userContent = userContent, catalyst = null)
+            sendUserMessageInternal(userContent = userContent)
         }
     }
 
-    private fun sendProactiveMessage(elapsedMs: Long) {
-        if (uiState.value.conversation.isSending) return
-        val bundle = activeConversationBundle ?: return
+    private suspend fun sendProactiveMessage(elapsedMs: Long): ProactiveTriggerResult {
+        if (uiState.value.conversation.isSending) return ProactiveTriggerResult.RETRY_LATER
+        val bundle = activeConversationBundle ?: return ProactiveTriggerResult.RETRY_LATER
         val normalizedConfig = activePreferences.providerConfig.normalized()
-        if (!normalizedConfig.hasRequiredFields()) return
+        if (!normalizedConfig.hasRequiredFields()) return ProactiveTriggerResult.RETRY_LATER
+        if (!isProactiveControllerEnabled()) return ProactiveTriggerResult.RETRY_LATER
 
-        val characterName = bundle.conversation.characterSnapshot?.effectiveName()
-            ?: CharacterCardSnapshot.DEFAULT_CHARACTER_NAME
-        val elapsedMinutes = elapsedMs / 60_000
-        val catalyst = "距上次对话已过去约 $elapsedMinutes 分钟，请以 $characterName 的身份主动发起新话题或表达关心。"
+        val historyMessages = bundle.messages
+        checkAndSummarizeIfNeeded(
+            messages = historyMessages,
+            conversationId = bundle.conversation.id,
+            config = normalizedConfig,
+            snapshot = bundle.conversation.characterSnapshot
+        )
 
-        viewModelScope.launch {
-            sendMessageInternal(userContent = null, catalyst = catalyst)
+        val decision = analyzeProactiveDecision(
+            snapshot = bundle.conversation.characterSnapshot,
+            historyMessages = historyMessages,
+            elapsedMs = elapsedMs,
+            config = normalizedConfig
+        ) ?: return ProactiveTriggerResult.RETRY_LATER
+
+        if (decision.action == ProactiveAction.WAIT_FOR_USER) {
+            return ProactiveTriggerResult.PAUSE_UNTIL_USER_REPLY
+        }
+
+        _uiState.update { current ->
+            current.copy(
+                conversation = current.conversation.copy(
+                    isSending = true,
+                    errorText = null,
+                    statusText = null
+                )
+            )
+        }
+
+        val sent = sendAssistantResponse(
+            activeBundle = bundle,
+            normalizedConfig = normalizedConfig,
+            historyMessages = historyMessages,
+            userContent = null,
+            guidance = decision.toGuidance(),
+            proactiveInstruction = decision.toInstruction()
+        )
+
+        return if (sent) {
+            ProactiveTriggerResult.SENT
+        } else {
+            ProactiveTriggerResult.RETRY_LATER
         }
     }
 
-    private suspend fun sendMessageInternal(userContent: String?, catalyst: String?) {
+    private suspend fun sendUserMessageInternal(userContent: String) {
         val activeBundle = activeConversationBundle ?: return
         val normalizedConfig = activePreferences.providerConfig.normalized()
+        val historyMessages = activeBundle.messages + ChatMessage(role = ChatRole.User, content = userContent)
 
-        val historyMessages = if (userContent != null) {
-            activeBundle.messages + ChatMessage(role = ChatRole.User, content = userContent)
-        } else {
-            activeBundle.messages
-        }
-
-        if (userContent != null) {
-            _uiState.update { current ->
-                current.copy(
-                    conversation = current.conversation.copy(
-                        optimisticUserMessage = ChatMessage(role = ChatRole.User, content = userContent),
-                        draft = "",
-                        isSending = true,
-                        errorText = null,
-                        statusText = null
-                    )
+        _uiState.update { current ->
+            current.copy(
+                conversation = current.conversation.copy(
+                    optimisticUserMessage = ChatMessage(role = ChatRole.User, content = userContent),
+                    draft = "",
+                    isSending = true,
+                    errorText = null,
+                    statusText = null
                 )
-            }
-        } else {
-            _uiState.update { current ->
-                current.copy(
-                    conversation = current.conversation.copy(
-                        isSending = true,
-                        errorText = null,
-                        statusText = null
-                    )
-                )
-            }
+            )
         }
 
         checkAndSummarizeIfNeeded(
@@ -881,43 +904,86 @@ class ChatViewModel(
             snapshot = activeBundle.conversation.characterSnapshot
         )
 
-        val guidance = if (activeAgentSettings.director.enabled) {
-            _uiState.update { current ->
-                current.copy(
-                    conversation = current.conversation.copy(
-                        isDirectorAnalyzing = true,
-                        statusText = "导演分析中..."
-                    )
-                )
-            }
-            val result = directorService.analyze(
-                snapshot = activeBundle.conversation.characterSnapshot,
-                emotionState = activeEmotionState,
-                conversationMessages = historyMessages,
-                config = normalizedConfig
-            ).getOrNull()
-            _uiState.update { current ->
-                current.copy(
-                    conversation = current.conversation.copy(
-                        isDirectorAnalyzing = false,
-                        statusText = null
-                    )
-                )
-            }
-            result
-        } else {
-            null
-        }
+        val guidance = analyzeDirectorGuidance(
+            snapshot = activeBundle.conversation.characterSnapshot,
+            historyMessages = historyMessages,
+            config = normalizedConfig
+        )
 
+        sendAssistantResponse(
+            activeBundle = activeBundle,
+            normalizedConfig = normalizedConfig,
+            historyMessages = historyMessages,
+            userContent = userContent,
+            guidance = guidance
+        )
+    }
+
+    private suspend fun analyzeDirectorGuidance(
+        snapshot: CharacterCardSnapshot?,
+        historyMessages: List<ChatMessage>,
+        config: ProviderConfig
+    ): DirectorGuidance? {
+        if (!activeAgentSettings.director.enabled) {
+            return null
+        }
+        setDirectorAnalysisState(isAnalyzing = true, statusText = "导演分析中...")
+        val result = directorService.analyze(
+            snapshot = snapshot,
+            emotionState = activeEmotionState,
+            conversationMessages = historyMessages,
+            config = config
+        ).getOrNull()
+        setDirectorAnalysisState(isAnalyzing = false, statusText = null)
+        return result
+    }
+
+    private suspend fun analyzeProactiveDecision(
+        snapshot: CharacterCardSnapshot?,
+        historyMessages: List<ChatMessage>,
+        elapsedMs: Long,
+        config: ProviderConfig
+    ): ProactiveDirectorDecision? {
+        setDirectorAnalysisState(isAnalyzing = true, statusText = "主动消息判断中...")
+        val result = directorService.analyzeProactive(
+            snapshot = snapshot,
+            emotionState = activeEmotionState,
+            conversationMessages = historyMessages,
+            elapsedMs = elapsedMs,
+            config = config
+        ).getOrNull()
+        setDirectorAnalysisState(isAnalyzing = false, statusText = null)
+        return result
+    }
+
+    private fun setDirectorAnalysisState(isAnalyzing: Boolean, statusText: String?) {
+        _uiState.update { current ->
+            current.copy(
+                conversation = current.conversation.copy(
+                    isDirectorAnalyzing = isAnalyzing,
+                    statusText = statusText
+                )
+            )
+        }
+    }
+
+    private suspend fun sendAssistantResponse(
+        activeBundle: ConversationWithMessages,
+        normalizedConfig: ProviderConfig,
+        historyMessages: List<ChatMessage>,
+        userContent: String?,
+        guidance: DirectorGuidance?,
+        proactiveInstruction: ProactiveInstruction? = null
+    ): Boolean {
         val requestMessages = promptComposer.compose(
             characterSnapshot = activeBundle.conversation.characterSnapshot,
             userPersona = activePreferences.userPersona,
             conversationMessages = historyMessages,
             directorGuidance = guidance,
-            proactiveCatalyst = catalyst
+            proactiveInstruction = proactiveInstruction
         )
 
-        chatProvider.send(
+        return chatProvider.send(
             messages = requestMessages,
             config = normalizedConfig
         ).fold(
@@ -935,46 +1001,54 @@ class ChatViewModel(
                             assistantMessage = assistantMessage
                         )
                     }
-                }.onSuccess {
-                    proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
-                    if (userContent != null) {
-                        proactiveController.resetCount()
-                    }
-                    val guidanceText = guidance?.let { formatDirectorGuidance(it) }
-                    val assistantIndex = historyMessages.size
-                    _uiState.update { current ->
-                        val updatedHints = if (guidanceText != null) {
-                            current.conversation.directorGuidanceHints + (assistantIndex to guidanceText)
-                        } else {
-                            current.conversation.directorGuidanceHints
+                }.fold(
+                    onSuccess = {
+                        if (userContent != null) {
+                            proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
+                            proactiveController.resetCount()
+                            if (!isProactiveControllerEnabled()) {
+                                proactiveController.stop()
+                            }
                         }
-                        current.copy(
-                            conversation = current.conversation.copy(
-                                isSending = false,
-                                optimisticUserMessage = null,
-                                errorText = null,
-                                directorGuidanceHints = updatedHints
+                        val guidanceText = guidance?.let { formatDirectorGuidance(it) }
+                        val assistantIndex = historyMessages.size
+                        _uiState.update { current ->
+                            val updatedHints = if (guidanceText != null) {
+                                current.conversation.directorGuidanceHints + (assistantIndex to guidanceText)
+                            } else {
+                                current.conversation.directorGuidanceHints
+                            }
+                            current.copy(
+                                conversation = current.conversation.copy(
+                                    isSending = false,
+                                    optimisticUserMessage = null,
+                                    errorText = null,
+                                    directorGuidanceHints = updatedHints
+                                )
                             )
+                        }
+                        updateEmotionAsync(
+                            conversationId = activeBundle.conversation.id,
+                            snapshot = activeBundle.conversation.characterSnapshot,
+                            recentMessages = historyMessages + assistantMessage,
+                            config = normalizedConfig
                         )
-                    }
-                    updateEmotionAsync(
-                        conversationId = activeBundle.conversation.id,
-                        snapshot = activeBundle.conversation.characterSnapshot,
-                        recentMessages = historyMessages + assistantMessage,
-                        config = normalizedConfig
-                    )
-                }.onFailure { throwable ->
-                    _uiState.update { current ->
-                        current.copy(
-                            conversation = current.conversation.copy(
-                                isSending = false,
-                                optimisticUserMessage = null,
-                                draft = userContent ?: current.conversation.draft,
-                                errorText = throwable.message ?: "保存聊天记录失败。"
+                        true
+                    },
+                    onFailure = { throwable ->
+                        _uiState.update { current ->
+                            current.copy(
+                                conversation = current.conversation.copy(
+                                    isSending = false,
+                                    optimisticUserMessage = null,
+                                    draft = userContent ?: current.conversation.draft,
+                                    errorText = throwable.message ?: "保存聊天记录失败。"
+                                )
                             )
-                        )
+                        }
+                        false
                     }
-                }
+                )
             },
             onFailure = { throwable ->
                 _uiState.update { current ->
@@ -989,6 +1063,7 @@ class ChatViewModel(
                         )
                     )
                 }
+                false
             }
         )
     }
@@ -1064,7 +1139,7 @@ class ChatViewModel(
                     activeAgentSettings = preferences.agentSettings
                     (directorService as? OpenAiCompatibleDirectorService)
                         ?.updateSystemPrompt(preferences.agentSettings.director.systemPrompt)
-                    if (preferences.agentSettings.proactive.enabled) {
+                    if (isProactiveControllerEnabled(preferences.agentSettings)) {
                         val lastTs = activeConversationBundle?.conversation?.updatedAt
                             ?: System.currentTimeMillis()
                         proactiveController.start(preferences.agentSettings.proactive, lastTs)
@@ -1210,7 +1285,7 @@ class ChatViewModel(
                 activeConversationBundle = bundle
                 if (bundle != null) {
                     activeEmotionState = bundle.conversation.emotionState
-                    if (activeAgentSettings.proactive.enabled) {
+                    if (isProactiveControllerEnabled()) {
                         proactiveController.start(
                             settings = activeAgentSettings.proactive,
                             lastMessageTimestampMs = bundle.conversation.updatedAt
@@ -1284,6 +1359,10 @@ class ChatViewModel(
         }
         val rawOutput = guidance.rawJson.trim()
         return rawOutput.takeIf(String::isNotEmpty)?.let { "导演原始输出：$it" }
+    }
+
+    private fun isProactiveControllerEnabled(settings: AgentSettings = activeAgentSettings): Boolean {
+        return settings.proactive.enabled && settings.director.enabled
     }
 
     private fun CharacterCardEditorState.toCharacterCard(): CharacterCard {
