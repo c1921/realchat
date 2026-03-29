@@ -74,8 +74,95 @@ enum class ChatRole(val wireName: String) {
 
 data class ChatMessage(
     val role: ChatRole,
-    val content: String
+    val content: String,
+    val createdAt: Long = 0L
 )
+
+enum class ConversationDebugSource(
+    val wireName: String,
+    val label: String
+) {
+    System("system", "系统"),
+    Agent("agent", "Agent"),
+    Director("director", "导演");
+
+    companion object {
+        fun fromWireName(value: String?): ConversationDebugSource? {
+            val normalized = value?.trim()?.lowercase().orEmpty()
+            return entries.firstOrNull { it.wireName == normalized }
+        }
+    }
+}
+
+enum class ConversationDebugType(val wireName: String) {
+    SendStarted("send_started"),
+    ProactiveTriggered("proactive_triggered"),
+    ProactivePaused("proactive_paused"),
+    DirectorAnalysisStarted("director_analysis_started"),
+    DirectorAnalysisSucceeded("director_analysis_succeeded"),
+    DirectorAnalysisFailed("director_analysis_failed"),
+    ProactiveDecisionStarted("proactive_decision_started"),
+    ProactiveDecisionSucceeded("proactive_decision_succeeded"),
+    ProactiveDecisionFailed("proactive_decision_failed"),
+    MemorySummaryStarted("memory_summary_started"),
+    MemorySummarySucceeded("memory_summary_succeeded"),
+    MemorySummaryFailed("memory_summary_failed"),
+    PromptComposed("prompt_composed"),
+    ChatRequestStarted("chat_request_started"),
+    ChatRequestSucceeded("chat_request_succeeded"),
+    ChatRequestFailed("chat_request_failed"),
+    EmotionUpdateStarted("emotion_update_started"),
+    EmotionUpdateSucceeded("emotion_update_succeeded"),
+    EmotionUpdateFailed("emotion_update_failed");
+
+    companion object {
+        fun fromWireName(value: String?): ConversationDebugType? {
+            val normalized = value?.trim()?.lowercase().orEmpty()
+            return entries.firstOrNull { it.wireName == normalized }
+        }
+    }
+}
+
+data class ConversationDebugEvent(
+    val id: Long = 0L,
+    val conversationId: Long = 0L,
+    val source: ConversationDebugSource = ConversationDebugSource.System,
+    val type: ConversationDebugType = ConversationDebugType.SendStarted,
+    val title: String = "",
+    val summary: String = "",
+    val details: String = "",
+    val createdAt: Long = 0L
+)
+
+sealed interface ConversationTimelineItem {
+    val createdAt: Long
+    val stableKey: String
+}
+
+data class MessageTimelineItem(
+    val message: ChatMessage,
+    val optimistic: Boolean = false
+) : ConversationTimelineItem {
+    override val createdAt: Long = message.createdAt
+    override val stableKey: String =
+        buildString {
+            append("message:")
+            append(if (optimistic) "optimistic" else "persisted")
+            append(':')
+            append(createdAt)
+            append(':')
+            append(message.role.wireName)
+            append(':')
+            append(message.content.hashCode())
+        }
+}
+
+data class DebugEventTimelineItem(
+    val event: ConversationDebugEvent
+) : ConversationTimelineItem {
+    override val createdAt: Long = event.createdAt
+    override val stableKey: String = "debug:${event.id}:${event.createdAt}"
+}
 
 @Serializable
 data class UserPersona(
@@ -234,5 +321,6 @@ data class ConversationListItem(
 
 data class ConversationWithMessages(
     val conversation: Conversation,
-    val messages: List<ChatMessage>
+    val messages: List<ChatMessage>,
+    val debugEvents: List<ConversationDebugEvent> = emptyList()
 )

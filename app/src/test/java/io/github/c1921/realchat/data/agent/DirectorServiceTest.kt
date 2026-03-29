@@ -1,6 +1,7 @@
 package io.github.c1921.realchat.data.agent
 
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.data.chat.ChatProviderResult
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCardSnapshot
@@ -53,8 +54,8 @@ class DirectorServiceTest {
         assertTrue(systemPrompt.contains("wait_for_user"))
         assertTrue(systemPrompt.contains("{{elapsed_minutes}}").not())
         assertTrue(systemPrompt.contains("42"))
-        assertEquals(ProactiveAction.CONTINUE_CURRENT_THREAD, result.action)
-        assertEquals("先不主动提时间", result.timeCue)
+        assertEquals(ProactiveAction.CONTINUE_CURRENT_THREAD, result.value.action)
+        assertEquals("先不主动提时间", result.value.timeCue)
     }
 }
 
@@ -66,8 +67,8 @@ private class CapturingChatProvider(
     override suspend fun send(
         messages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<ChatMessage> {
+    ): Result<ChatProviderResult> {
         lastMessages = messages
-        return Result.success(response)
+        return Result.success(ChatProviderResult(message = response))
     }
 }

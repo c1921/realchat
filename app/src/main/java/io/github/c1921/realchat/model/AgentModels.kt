@@ -1,5 +1,23 @@
 package io.github.c1921.realchat.model
 
+data class AgentExecutionTrace(
+    val systemPrompt: String = "",
+    val requestMessages: List<ChatMessage> = emptyList(),
+    val rawOutput: String = "",
+    val parsedSummary: String = ""
+)
+
+data class TracedValue<T>(
+    val value: T,
+    val trace: AgentExecutionTrace
+)
+
+class AgentExecutionException(
+    message: String,
+    cause: Throwable? = null,
+    val trace: AgentExecutionTrace = AgentExecutionTrace()
+) : RuntimeException(message, cause)
+
 data class ProactiveSettings(
     val enabled: Boolean = false,
     val minIntervalMinutes: Int = 30,

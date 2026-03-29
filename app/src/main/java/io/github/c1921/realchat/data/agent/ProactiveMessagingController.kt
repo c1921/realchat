@@ -76,6 +76,8 @@ class ProactiveMessagingController(
 
     fun getSentCount(): Int = sentCount
 
+    fun isRunning(): Boolean = timerJob?.isActive == true
+
     private suspend fun handleTrigger(nowMs: Long, settings: ProactiveSettings) {
         val elapsed = nowMs - lastMessageTimestampMs
         when (onTrigger(elapsed)) {

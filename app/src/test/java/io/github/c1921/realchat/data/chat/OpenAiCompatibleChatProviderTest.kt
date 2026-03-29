@@ -79,7 +79,7 @@ class OpenAiCompatibleChatProviderTest {
                 )
             )
 
-            assertEquals("你好", result.getOrThrow().content)
+            assertEquals("你好", result.getOrThrow().message.content)
 
             val recordedRequest = server.takeRequest()
             assertEquals("/v1/chat/completions", recordedRequest.path)

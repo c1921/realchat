@@ -87,6 +87,30 @@ data class ConversationMessageEntity(
     val createdAt: Long
 )
 
+@Entity(
+    tableName = "conversation_debug_events",
+    foreignKeys = [
+        ForeignKey(
+            entity = ConversationEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["conversationId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["conversationId"]), Index(value = ["createdAt"])]
+)
+data class ConversationDebugEventEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0L,
+    val conversationId: Long,
+    val source: String,
+    val type: String,
+    val title: String,
+    val summary: String,
+    val details: String,
+    val createdAt: Long
+)
+
 data class ConversationListItemRow(
     @Embedded
     val conversation: ConversationEntity,
@@ -189,13 +213,25 @@ interface ConversationMessageDao {
     suspend fun deleteAll(conversationId: Long)
 }
 
+@Dao
+interface ConversationDebugEventDao {
+    @Query(
+        "SELECT * FROM conversation_debug_events WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC"
+    )
+    fun observeByConversationId(conversationId: Long): Flow<List<ConversationDebugEventEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(event: ConversationDebugEventEntity): Long
+}
+
 @Database(
     entities = [
         CharacterCardEntity::class,
         ConversationEntity::class,
-        ConversationMessageEntity::class
+        ConversationMessageEntity::class,
+        ConversationDebugEventEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -204,6 +240,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
 
     abstract fun conversationMessageDao(): ConversationMessageDao
+
+    abstract fun conversationDebugEventDao(): ConversationDebugEventDao
 
     companion object {
         private const val DATABASE_NAME = "realchat.db"
@@ -384,7 +422,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `conversation_debug_events` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `conversationId` INTEGER NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `summary` TEXT NOT NULL,
+                        `details` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        FOREIGN KEY(`conversationId`) REFERENCES `conversations`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_conversation_debug_events_conversationId` ON `conversation_debug_events` (`conversationId`)"
+                )
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_conversation_debug_events_createdAt` ON `conversation_debug_events` (`createdAt`)"
+                )
+            }
+        }
+
+        val MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5
+        )
 
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {

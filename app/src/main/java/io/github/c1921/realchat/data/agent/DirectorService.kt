@@ -1,6 +1,8 @@
 package io.github.c1921.realchat.data.agent
 
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.model.AgentExecutionException
+import io.github.c1921.realchat.model.AgentExecutionTrace
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
@@ -9,6 +11,7 @@ import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.ProactiveAction
 import io.github.c1921.realchat.model.ProactiveDirectorDecision
 import io.github.c1921.realchat.model.ProviderConfig
+import io.github.c1921.realchat.model.TracedValue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -20,7 +23,7 @@ interface DirectorService {
         emotionState: EmotionState,
         conversationMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<DirectorGuidance>
+    ): Result<TracedValue<DirectorGuidance>>
 
     suspend fun analyzeProactive(
         snapshot: CharacterCardSnapshot?,
@@ -28,7 +31,7 @@ interface DirectorService {
         conversationMessages: List<ChatMessage>,
         elapsedMs: Long,
         config: ProviderConfig
-    ): Result<ProactiveDirectorDecision>
+    ): Result<TracedValue<ProactiveDirectorDecision>>
 }
 
 class OpenAiCompatibleDirectorService(
@@ -47,7 +50,7 @@ class OpenAiCompatibleDirectorService(
         emotionState: EmotionState,
         conversationMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<DirectorGuidance> {
+    ): Result<TracedValue<DirectorGuidance>> {
         val characterName = snapshot?.effectiveName().orEmpty()
         val effectivePrompt = systemPrompt.takeUnless { it.isBlank() }
             ?: DEFAULT_DIRECTOR_SYSTEM_PROMPT
@@ -61,9 +64,39 @@ class OpenAiCompatibleDirectorService(
         val messages = listOf(ChatMessage(role = ChatRole.System, content = resolvedPrompt)) +
             recentMessages
 
-        return chatProvider.send(messages, config).mapCatching { response ->
-            parseGuidance(response.content)
-        }
+        return chatProvider.send(messages, config).fold(
+            onSuccess = { response ->
+                val rawOutput = response.message.content
+                runCatching {
+                    val guidance = parseGuidance(rawOutput)
+                    TracedValue(
+                        value = guidance,
+                        trace = AgentExecutionTrace(
+                            systemPrompt = resolvedPrompt,
+                            requestMessages = messages,
+                            rawOutput = rawOutput,
+                            parsedSummary = summarizeGuidance(guidance)
+                        )
+                    )
+                }.fold(
+                    onSuccess = { Result.success(it) },
+                    onFailure = {
+                        Result.failure(
+                            AgentExecutionException(
+                                message = it.message ?: "导演输出解析失败。",
+                                cause = it,
+                                trace = AgentExecutionTrace(
+                                    systemPrompt = resolvedPrompt,
+                                    requestMessages = messages,
+                                    rawOutput = rawOutput
+                                )
+                            )
+                        )
+                    }
+                )
+            },
+            onFailure = { Result.failure(it) }
+        )
     }
 
     override suspend fun analyzeProactive(
@@ -72,7 +105,7 @@ class OpenAiCompatibleDirectorService(
         conversationMessages: List<ChatMessage>,
         elapsedMs: Long,
         config: ProviderConfig
-    ): Result<ProactiveDirectorDecision> {
+    ): Result<TracedValue<ProactiveDirectorDecision>> {
         val characterName = snapshot?.effectiveName().orEmpty()
         val elapsedMinutes = (elapsedMs / 60_000L).coerceAtLeast(0L)
         val resolvedPrompt = resolvePrompt(
@@ -85,9 +118,39 @@ class OpenAiCompatibleDirectorService(
         val messages = listOf(ChatMessage(role = ChatRole.System, content = resolvedPrompt)) +
             recentMessages
 
-        return chatProvider.send(messages, config).mapCatching { response ->
-            parseProactiveDecision(response.content)
-        }
+        return chatProvider.send(messages, config).fold(
+            onSuccess = { response ->
+                val rawOutput = response.message.content
+                runCatching {
+                    val decision = parseProactiveDecision(rawOutput)
+                    TracedValue(
+                        value = decision,
+                        trace = AgentExecutionTrace(
+                            systemPrompt = resolvedPrompt,
+                            requestMessages = messages,
+                            rawOutput = rawOutput,
+                            parsedSummary = summarizeDecision(decision)
+                        )
+                    )
+                }.fold(
+                    onSuccess = { Result.success(it) },
+                    onFailure = {
+                        Result.failure(
+                            AgentExecutionException(
+                                message = it.message ?: "主动导演输出解析失败。",
+                                cause = it,
+                                trace = AgentExecutionTrace(
+                                    systemPrompt = resolvedPrompt,
+                                    requestMessages = messages,
+                                    rawOutput = rawOutput
+                                )
+                            )
+                        )
+                    }
+                )
+            },
+            onFailure = { Result.failure(it) }
+        )
     }
 
     private fun parseGuidance(rawText: String): DirectorGuidance {
@@ -141,6 +204,26 @@ class OpenAiCompatibleDirectorService(
             .replace("{{affection}}", emotionState.affection.toString())
             .replace("{{mood}}", emotionState.mood.toString())
             .replace("{{char}}", characterName)
+    }
+
+    private fun summarizeGuidance(guidance: DirectorGuidance): String {
+        return buildList {
+            if (guidance.mood.isNotBlank()) add("氛围：${guidance.mood}")
+            if (guidance.topicDirection.isNotBlank()) add("话题方向：${guidance.topicDirection}")
+            if (guidance.pursue.isNotBlank()) add("推进：${guidance.pursue}")
+            if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
+        }.joinToString("，")
+    }
+
+    private fun summarizeDecision(decision: ProactiveDirectorDecision): String {
+        return buildList {
+            add("动作：${decision.action.wireName}")
+            if (decision.mood.isNotBlank()) add("氛围：${decision.mood}")
+            if (decision.topicDirection.isNotBlank()) add("话题方向：${decision.topicDirection}")
+            if (decision.pursue.isNotBlank()) add("推进：${decision.pursue}")
+            if (decision.avoid.isNotBlank()) add("避免：${decision.avoid}")
+            if (decision.timeCue.isNotBlank()) add("时间表达：${decision.timeCue}")
+        }.joinToString("，")
     }
 
     companion object {

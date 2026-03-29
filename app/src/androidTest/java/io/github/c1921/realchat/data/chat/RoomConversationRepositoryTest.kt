@@ -7,6 +7,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
+import io.github.c1921.realchat.model.ConversationDebugSource
+import io.github.c1921.realchat.model.ConversationDebugType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -58,12 +60,38 @@ class RoomConversationRepositoryTest {
         assertEquals("Alice", bundle?.conversation?.characterSnapshot?.effectiveName())
         assertEquals(
             listOf(
-                ChatMessage(ChatRole.Assistant, "我到了。"),
-                ChatMessage(ChatRole.User, "你好"),
-                ChatMessage(ChatRole.Assistant, "继续。")
+                ChatRole.Assistant to "我到了。",
+                ChatRole.User to "你好",
+                ChatRole.Assistant to "继续。"
             ),
-            bundle?.messages
+            bundle?.messages?.map { it.role to it.content }
         )
+    }
+
+    @Test
+    fun appendDebugEvent_persistsAndRestoresConversationLogs() = runBlocking {
+        val database = inMemoryDatabase()
+        val repository = RoomConversationRepository(database)
+        val conversationId = repository.createConversation(
+            CharacterCard(id = 3L, name = "调试角色")
+        )
+
+        repository.appendDebugEvent(
+            conversationId = conversationId,
+            source = ConversationDebugSource.Director,
+            type = ConversationDebugType.DirectorAnalysisSucceeded,
+            title = "导演分析完成",
+            summary = "氛围：温暖",
+            details = "原始输出\n{\"mood\":\"温暖\"}",
+            createdAt = 1234L
+        )
+
+        val bundle = repository.observeConversationWithMessages(conversationId)
+            .first { it?.debugEvents?.isNotEmpty() == true }
+
+        assertEquals(1, bundle?.debugEvents?.size)
+        assertEquals("导演分析完成", bundle?.debugEvents?.single()?.title)
+        assertEquals("氛围：温暖", bundle?.debugEvents?.single()?.summary)
     }
 
     @Test

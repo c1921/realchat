@@ -17,6 +17,8 @@ import io.github.c1921.realchat.data.character.CharacterCardRepository
 import io.github.c1921.realchat.data.character.RoomCharacterCardRepository
 import io.github.c1921.realchat.data.chat.AppDatabase
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.data.chat.ChatRequestException
+import io.github.c1921.realchat.data.chat.ChatRequestTrace
 import io.github.c1921.realchat.data.chat.ConversationRepository
 import io.github.c1921.realchat.data.chat.OpenAiCompatibleChatProvider
 import io.github.c1921.realchat.data.chat.PromptComposer
@@ -26,6 +28,7 @@ import io.github.c1921.realchat.data.settings.AppPreferences
 import io.github.c1921.realchat.data.settings.AppPreferencesRepository
 import io.github.c1921.realchat.data.settings.DataStoreAppPreferencesRepository
 import io.github.c1921.realchat.model.AgentSettings
+import io.github.c1921.realchat.model.AgentExecutionException
 import io.github.c1921.realchat.model.DirectorSettings
 import io.github.c1921.realchat.model.MemorySettings
 import io.github.c1921.realchat.model.ProactiveSettings
@@ -34,6 +37,9 @@ import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationDebugEvent
+import io.github.c1921.realchat.model.ConversationDebugSource
+import io.github.c1921.realchat.model.ConversationDebugType
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.DirectorGuidance
@@ -93,6 +99,7 @@ data class ConversationUiState(
     val conversationItems: List<ConversationListItem> = emptyList(),
     val selectedConversationId: Long? = null,
     val messages: List<ChatMessage> = emptyList(),
+    val debugEvents: List<ConversationDebugEvent> = emptyList(),
     val draft: String = "",
     val isSending: Boolean = false,
     val isDirectorAnalyzing: Boolean = false,
@@ -102,7 +109,6 @@ data class ConversationUiState(
     val showCreateDialog: Boolean = false,
     val pendingCharacterCardId: Long? = null,
     val emotionState: EmotionState = EmotionState(),
-    val directorGuidanceHints: Map<Int, String> = emptyMap(),
     val optimisticUserMessage: ChatMessage? = null
 ) {
     fun selectedConversation(): Conversation? {
@@ -190,6 +196,7 @@ class ChatViewModel(
     private var activeConversationBundle: ConversationWithMessages? = null
     private var activeConversationJob: Job? = null
     private var lastAppliedAgentSettings: AgentSettings? = null
+    private var lastDebugEventTimestampMs: Long = 0L
 
     internal val proactiveController = ProactiveMessagingController(
         scope = viewModelScope,
@@ -836,6 +843,17 @@ class ChatViewModel(
         if (!isProactiveControllerEnabled()) return ProactiveTriggerResult.RETRY_LATER
 
         val historyMessages = bundle.messages
+        appendDebugEvent(
+            conversationId = bundle.conversation.id,
+            source = ConversationDebugSource.Agent,
+            type = ConversationDebugType.ProactiveTriggered,
+            title = "主动消息触发",
+            summary = "距离上次消息约 ${(elapsedMs / 60_000L).coerceAtLeast(0L)} 分钟。",
+            details = buildDetailSections(
+                "触发信息" to "elapsedMs=$elapsedMs",
+                "最近消息" to formatMessages(historyMessages)
+            )
+        )
         checkAndSummarizeIfNeeded(
             messages = historyMessages,
             conversationId = bundle.conversation.id,
@@ -845,12 +863,23 @@ class ChatViewModel(
 
         val decision = analyzeProactiveDecision(
             snapshot = bundle.conversation.characterSnapshot,
+            conversationId = bundle.conversation.id,
             historyMessages = historyMessages,
             elapsedMs = elapsedMs,
             config = normalizedConfig
         ) ?: return ProactiveTriggerResult.RETRY_LATER
 
         if (decision.action == ProactiveAction.WAIT_FOR_USER) {
+            appendDebugEvent(
+                conversationId = bundle.conversation.id,
+                source = ConversationDebugSource.Agent,
+                type = ConversationDebugType.ProactivePaused,
+                title = "主动消息暂停",
+                summary = "导演决定等待用户回复，不主动发送新消息。",
+                details = buildDetailSections(
+                    "导演决策" to formatProactiveDecision(decision)
+                )
+            )
             return ProactiveTriggerResult.PAUSE_UNTIL_USER_REPLY
         }
 
@@ -883,12 +912,28 @@ class ChatViewModel(
     private suspend fun sendUserMessageInternal(userContent: String) {
         val activeBundle = activeConversationBundle ?: return
         val normalizedConfig = activePreferences.providerConfig.normalized()
-        val historyMessages = activeBundle.messages + ChatMessage(role = ChatRole.User, content = userContent)
+        val userMessage = ChatMessage(
+            role = ChatRole.User,
+            content = userContent,
+            createdAt = System.currentTimeMillis()
+        )
+        val historyMessages = activeBundle.messages + userMessage
+
+        appendDebugEvent(
+            conversationId = activeBundle.conversation.id,
+            source = ConversationDebugSource.System,
+            type = ConversationDebugType.SendStarted,
+            title = "用户发送消息",
+            summary = userContent.take(60),
+            details = buildDetailSections(
+                "用户消息" to userContent
+            )
+        )
 
         _uiState.update { current ->
             current.copy(
                 conversation = current.conversation.copy(
-                    optimisticUserMessage = ChatMessage(role = ChatRole.User, content = userContent),
+                    optimisticUserMessage = userMessage,
                     draft = "",
                     isSending = true,
                     errorText = null,
@@ -906,6 +951,7 @@ class ChatViewModel(
 
         val guidance = analyzeDirectorGuidance(
             snapshot = activeBundle.conversation.characterSnapshot,
+            conversationId = activeBundle.conversation.id,
             historyMessages = historyMessages,
             config = normalizedConfig
         )
@@ -921,29 +967,74 @@ class ChatViewModel(
 
     private suspend fun analyzeDirectorGuidance(
         snapshot: CharacterCardSnapshot?,
+        conversationId: Long,
         historyMessages: List<ChatMessage>,
         config: ProviderConfig
     ): DirectorGuidance? {
         if (!activeAgentSettings.director.enabled) {
             return null
         }
+        appendDebugEvent(
+            conversationId = conversationId,
+            source = ConversationDebugSource.Director,
+            type = ConversationDebugType.DirectorAnalysisStarted,
+            title = "导演分析开始",
+            summary = "分析最近 ${historyMessages.size} 条上下文消息。",
+            details = buildDetailSections(
+                "输入消息" to formatMessages(historyMessages)
+            )
+        )
         setDirectorAnalysisState(isAnalyzing = true, statusText = "导演分析中...")
         val result = directorService.analyze(
             snapshot = snapshot,
             emotionState = activeEmotionState,
             conversationMessages = historyMessages,
             config = config
-        ).getOrNull()
+        )
         setDirectorAnalysisState(isAnalyzing = false, statusText = null)
-        return result
+        return result.fold(
+            onSuccess = { traced ->
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Director,
+                    type = ConversationDebugType.DirectorAnalysisSucceeded,
+                    title = "导演分析完成",
+                    summary = traced.trace.parsedSummary.ifBlank { "导演未返回结构化摘要。" },
+                    details = formatAgentTraceDetails(traced.trace)
+                )
+                traced.value
+            },
+            onFailure = { throwable ->
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Director,
+                    type = ConversationDebugType.DirectorAnalysisFailed,
+                    title = "导演分析失败",
+                    summary = throwable.message ?: "导演分析失败。",
+                    details = formatThrowableDetails(throwable)
+                )
+                null
+            }
+        )
     }
 
     private suspend fun analyzeProactiveDecision(
         snapshot: CharacterCardSnapshot?,
+        conversationId: Long,
         historyMessages: List<ChatMessage>,
         elapsedMs: Long,
         config: ProviderConfig
     ): ProactiveDirectorDecision? {
+        appendDebugEvent(
+            conversationId = conversationId,
+            source = ConversationDebugSource.Director,
+            type = ConversationDebugType.ProactiveDecisionStarted,
+            title = "主动导演分析开始",
+            summary = "距离用户上次发言约 ${(elapsedMs / 60_000L).coerceAtLeast(0L)} 分钟。",
+            details = buildDetailSections(
+                "输入消息" to formatMessages(historyMessages)
+            )
+        )
         setDirectorAnalysisState(isAnalyzing = true, statusText = "主动消息判断中...")
         val result = directorService.analyzeProactive(
             snapshot = snapshot,
@@ -951,9 +1042,32 @@ class ChatViewModel(
             conversationMessages = historyMessages,
             elapsedMs = elapsedMs,
             config = config
-        ).getOrNull()
+        )
         setDirectorAnalysisState(isAnalyzing = false, statusText = null)
-        return result
+        return result.fold(
+            onSuccess = { traced ->
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Director,
+                    type = ConversationDebugType.ProactiveDecisionSucceeded,
+                    title = "主动导演分析完成",
+                    summary = traced.trace.parsedSummary.ifBlank { formatProactiveDecision(traced.value) },
+                    details = formatAgentTraceDetails(traced.trace)
+                )
+                traced.value
+            },
+            onFailure = { throwable ->
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Director,
+                    type = ConversationDebugType.ProactiveDecisionFailed,
+                    title = "主动导演分析失败",
+                    summary = throwable.message ?: "主动导演分析失败。",
+                    details = formatThrowableDetails(throwable)
+                )
+                null
+            }
+        )
     }
 
     private fun setDirectorAnalysisState(isAnalyzing: Boolean, statusText: String?) {
@@ -983,11 +1097,33 @@ class ChatViewModel(
             proactiveInstruction = proactiveInstruction
         )
 
+        appendDebugEvent(
+            conversationId = activeBundle.conversation.id,
+            source = ConversationDebugSource.System,
+            type = ConversationDebugType.PromptComposed,
+            title = "Prompt 拼装完成",
+            summary = summarizePrompt(requestMessages),
+            details = buildDetailSections(
+                "拼装结果" to formatMessages(requestMessages)
+            )
+        )
+        appendDebugEvent(
+            conversationId = activeBundle.conversation.id,
+            source = ConversationDebugSource.System,
+            type = ConversationDebugType.ChatRequestStarted,
+            title = "主模型请求开始",
+            summary = "模型 ${normalizedConfig.model}",
+            details = buildDetailSections(
+                "请求信息" to "URL=${buildChatCompletionsUrl(normalizedConfig.baseUrl)}\n模型=${normalizedConfig.model}"
+            )
+        )
+
         return chatProvider.send(
             messages = requestMessages,
             config = normalizedConfig
         ).fold(
-            onSuccess = { assistantMessage ->
+            onSuccess = { response ->
+                val assistantMessage = response.message
                 runCatching {
                     if (userContent != null) {
                         conversationRepository.appendSuccessfulExchange(
@@ -1003,6 +1139,14 @@ class ChatViewModel(
                     }
                 }.fold(
                     onSuccess = {
+                        appendDebugEvent(
+                            conversationId = activeBundle.conversation.id,
+                            source = ConversationDebugSource.System,
+                            type = ConversationDebugType.ChatRequestSucceeded,
+                            title = "主模型请求成功",
+                            summary = assistantMessage.content.take(80),
+                            details = formatChatRequestTraceDetails(response.trace)
+                        )
                         if (userContent != null) {
                             proactiveController.updateLastMessageTimestamp(System.currentTimeMillis())
                             proactiveController.resetCount()
@@ -1010,20 +1154,12 @@ class ChatViewModel(
                                 proactiveController.stop()
                             }
                         }
-                        val guidanceText = guidance?.let { formatDirectorGuidance(it) }
-                        val assistantIndex = historyMessages.size
                         _uiState.update { current ->
-                            val updatedHints = if (guidanceText != null) {
-                                current.conversation.directorGuidanceHints + (assistantIndex to guidanceText)
-                            } else {
-                                current.conversation.directorGuidanceHints
-                            }
                             current.copy(
                                 conversation = current.conversation.copy(
                                     isSending = false,
                                     optimisticUserMessage = null,
-                                    errorText = null,
-                                    directorGuidanceHints = updatedHints
+                                    errorText = null
                                 )
                             )
                         }
@@ -1036,6 +1172,14 @@ class ChatViewModel(
                         true
                     },
                     onFailure = { throwable ->
+                        appendDebugEvent(
+                            conversationId = activeBundle.conversation.id,
+                            source = ConversationDebugSource.System,
+                            type = ConversationDebugType.ChatRequestFailed,
+                            title = "聊天记录保存失败",
+                            summary = throwable.message ?: "保存聊天记录失败。",
+                            details = formatThrowableDetails(throwable)
+                        )
                         _uiState.update { current ->
                             current.copy(
                                 conversation = current.conversation.copy(
@@ -1051,6 +1195,14 @@ class ChatViewModel(
                 )
             },
             onFailure = { throwable ->
+                appendDebugEvent(
+                    conversationId = activeBundle.conversation.id,
+                    source = ConversationDebugSource.System,
+                    type = ConversationDebugType.ChatRequestFailed,
+                    title = "主模型请求失败",
+                    summary = throwable.message ?: "请求失败。",
+                    details = formatChatFailureDetails(throwable, requestMessages)
+                )
                 _uiState.update { current ->
                     current.copy(
                         conversation = current.conversation.copy(
@@ -1082,17 +1234,49 @@ class ChatViewModel(
         val toSummarize = messages.dropLast(memorySettings.keepRecentCount)
         if (toSummarize.isEmpty()) return
 
+        appendDebugEvent(
+            conversationId = conversationId,
+            source = ConversationDebugSource.Agent,
+            type = ConversationDebugType.MemorySummaryStarted,
+            title = "记忆摘要开始",
+            summary = "压缩 ${toSummarize.size} 条旧消息，保留最近 ${keepMessages.size} 条。",
+            details = buildDetailSections(
+                "待压缩消息" to formatMessages(toSummarize),
+                "保留消息" to formatMessages(keepMessages)
+            )
+        )
+
         memorySummarizer.summarize(
             messagesToSummarize = toSummarize,
             snapshot = snapshot,
             config = config
-        ).onSuccess { summary ->
-            conversationRepository.replaceWithSummary(
-                conversationId = conversationId,
-                summaryText = summary,
-                keepRecentMessages = keepMessages
-            )
-        }
+        ).fold(
+            onSuccess = { traced ->
+                conversationRepository.replaceWithSummary(
+                    conversationId = conversationId,
+                    summaryText = traced.value,
+                    keepRecentMessages = keepMessages
+                )
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Agent,
+                    type = ConversationDebugType.MemorySummarySucceeded,
+                    title = "记忆摘要完成",
+                    summary = traced.value.take(80),
+                    details = formatAgentTraceDetails(traced.trace)
+                )
+            },
+            onFailure = { throwable ->
+                appendDebugEvent(
+                    conversationId = conversationId,
+                    source = ConversationDebugSource.Agent,
+                    type = ConversationDebugType.MemorySummaryFailed,
+                    title = "记忆摘要失败",
+                    summary = throwable.message ?: "记忆摘要失败。",
+                    details = formatThrowableDetails(throwable)
+                )
+            }
+        )
     }
 
     private fun updateEmotionAsync(
@@ -1102,22 +1286,53 @@ class ChatViewModel(
         config: ProviderConfig
     ) {
         viewModelScope.launch {
+            appendDebugEvent(
+                conversationId = conversationId,
+                source = ConversationDebugSource.Agent,
+                type = ConversationDebugType.EmotionUpdateStarted,
+                title = "情绪更新开始",
+                summary = "基于最近 ${recentMessages.size} 条消息重新评估。",
+                details = buildDetailSections(
+                    "最近消息" to formatMessages(recentMessages)
+                )
+            )
             emotionUpdater.update(
                 currentState = activeEmotionState,
                 snapshot = snapshot,
                 recentMessages = recentMessages,
                 config = config
-            ).onSuccess { newState ->
-                activeEmotionState = newState
-                conversationRepository.updateEmotionState(conversationId, newState)
-                _uiState.update { current ->
-                    current.copy(
-                        conversation = current.conversation.copy(
-                            emotionState = newState
+            ).fold(
+                onSuccess = { traced ->
+                    val newState = traced.value
+                    activeEmotionState = newState
+                    conversationRepository.updateEmotionState(conversationId, newState)
+                    appendDebugEvent(
+                        conversationId = conversationId,
+                        source = ConversationDebugSource.Agent,
+                        type = ConversationDebugType.EmotionUpdateSucceeded,
+                        title = "情绪更新完成",
+                        summary = "好感度 ${newState.affection}，心情 ${newState.mood}",
+                        details = formatAgentTraceDetails(traced.trace)
+                    )
+                    _uiState.update { current ->
+                        current.copy(
+                            conversation = current.conversation.copy(
+                                emotionState = newState
+                            )
                         )
+                    }
+                },
+                onFailure = { throwable ->
+                    appendDebugEvent(
+                        conversationId = conversationId,
+                        source = ConversationDebugSource.Agent,
+                        type = ConversationDebugType.EmotionUpdateFailed,
+                        title = "情绪更新失败",
+                        summary = throwable.message ?: "情绪更新失败。",
+                        details = formatThrowableDetails(throwable)
                     )
                 }
-            }
+            )
         }
     }
 
@@ -1267,10 +1482,10 @@ class ChatViewModel(
             current.copy(
                 conversation = current.conversation.copy(
                     messages = emptyList(),
+                    debugEvents = emptyList(),
                     draft = "",
                     isSending = false,
                     emotionState = EmotionState(),
-                    directorGuidanceHints = emptyMap(),
                     optimisticUserMessage = null
                 )
             )
@@ -1285,7 +1500,7 @@ class ChatViewModel(
                 activeConversationBundle = bundle
                 if (bundle != null) {
                     activeEmotionState = bundle.conversation.emotionState
-                    if (isProactiveControllerEnabled()) {
+                    if (isProactiveControllerEnabled() && !proactiveController.isRunning()) {
                         proactiveController.start(
                             settings = activeAgentSettings.proactive,
                             lastMessageTimestampMs = bundle.conversation.updatedAt
@@ -1296,6 +1511,7 @@ class ChatViewModel(
                     current.copy(
                         conversation = current.conversation.copy(
                             messages = bundle?.messages.orEmpty(),
+                            debugEvents = bundle?.debugEvents.orEmpty(),
                             draft = bundle?.conversation?.draft.orEmpty(),
                             emotionState = bundle?.conversation?.emotionState ?: EmotionState()
                         )
@@ -1347,7 +1563,45 @@ class ChatViewModel(
         }
     }
 
-    private fun formatDirectorGuidance(guidance: DirectorGuidance): String? {
+    private suspend fun appendDebugEvent(
+        conversationId: Long,
+        source: ConversationDebugSource,
+        type: ConversationDebugType,
+        title: String,
+        summary: String,
+        details: String = ""
+    ) {
+        runCatching {
+            conversationRepository.appendDebugEvent(
+                conversationId = conversationId,
+                source = source,
+                type = type,
+                title = title,
+                summary = summary,
+                details = details,
+                createdAt = nextDebugEventTimestamp()
+            )
+        }
+    }
+
+    private fun nextDebugEventTimestamp(): Long {
+        val now = System.currentTimeMillis()
+        return if (now > lastDebugEventTimestampMs) {
+            lastDebugEventTimestampMs = now
+            now
+        } else {
+            (lastDebugEventTimestampMs + 1L).also { lastDebugEventTimestampMs = it }
+        }
+    }
+
+    private fun summarizePrompt(messages: List<ChatMessage>): String {
+        val systemCount = messages.count { it.role == ChatRole.System }
+        val userCount = messages.count { it.role == ChatRole.User }
+        val assistantCount = messages.count { it.role == ChatRole.Assistant }
+        return "system $systemCount 条，user $userCount 条，assistant $assistantCount 条，总计 ${messages.size} 条。"
+    }
+
+    private fun formatDirectorGuidance(guidance: DirectorGuidance): String {
         val parts = buildList {
             if (guidance.mood.isNotBlank()) add("氛围：${guidance.mood}")
             if (guidance.topicDirection.isNotBlank()) add("话题方向：${guidance.topicDirection}")
@@ -1355,10 +1609,79 @@ class ChatViewModel(
             if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
         }
         if (parts.isNotEmpty()) {
-            return "导演指示：${parts.joinToString("，")}"
+            return parts.joinToString("，")
         }
         val rawOutput = guidance.rawJson.trim()
-        return rawOutput.takeIf(String::isNotEmpty)?.let { "导演原始输出：$it" }
+        return rawOutput.ifBlank { "导演未返回可解析内容。" }
+    }
+
+    private fun formatProactiveDecision(decision: ProactiveDirectorDecision): String {
+        return buildList {
+            add("动作：${decision.action.wireName}")
+            if (decision.mood.isNotBlank()) add("氛围：${decision.mood}")
+            if (decision.topicDirection.isNotBlank()) add("话题方向：${decision.topicDirection}")
+            if (decision.pursue.isNotBlank()) add("推进：${decision.pursue}")
+            if (decision.avoid.isNotBlank()) add("避免：${decision.avoid}")
+            if (decision.timeCue.isNotBlank()) add("时间表达：${decision.timeCue}")
+        }.joinToString("，")
+    }
+
+    private fun formatMessages(messages: List<ChatMessage>): String {
+        if (messages.isEmpty()) {
+            return "（无）"
+        }
+        return messages.joinToString("\n\n") { message ->
+            "[${message.role.wireName}] ${message.content}"
+        }
+    }
+
+    private fun formatAgentTraceDetails(trace: io.github.c1921.realchat.model.AgentExecutionTrace): String {
+        return buildDetailSections(
+            "系统提示词" to trace.systemPrompt,
+            "请求消息" to formatMessages(trace.requestMessages),
+            "原始输出" to trace.rawOutput,
+            "解析摘要" to trace.parsedSummary
+        )
+    }
+
+    private fun formatThrowableDetails(throwable: Throwable): String {
+        val traceDetails = (throwable as? AgentExecutionException)?.trace?.let(::formatAgentTraceDetails)
+        val chatTraceDetails = (throwable as? ChatRequestException)?.trace?.let(::formatChatRequestTraceDetails)
+        return buildDetailSections(
+            "错误信息" to (throwable.message ?: throwable::class.java.simpleName),
+            "Trace" to traceDetails,
+            "请求 Trace" to chatTraceDetails
+        )
+    }
+
+    private fun formatChatRequestTraceDetails(trace: ChatRequestTrace): String {
+        return buildDetailSections(
+            "请求信息" to "URL=${trace.requestUrl}\n模型=${trace.model}",
+            "请求消息" to formatMessages(trace.requestMessages),
+            "原始响应体" to trace.rawResponseBody,
+            "提取回复" to trace.responseContent
+        )
+    }
+
+    private fun formatChatFailureDetails(
+        throwable: Throwable,
+        fallbackMessages: List<ChatMessage>
+    ): String {
+        val trace = (throwable as? ChatRequestException)?.trace
+        return buildDetailSections(
+            "错误信息" to (throwable.message ?: throwable::class.java.simpleName),
+            "请求信息" to trace?.let { "URL=${it.requestUrl}\n模型=${it.model}" },
+            "请求消息" to formatMessages(trace?.requestMessages ?: fallbackMessages),
+            "原始响应体" to trace?.rawResponseBody
+        )
+    }
+
+    private fun buildDetailSections(vararg sections: Pair<String, String?>): String {
+        return sections.mapNotNull { (title, content) ->
+            content?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?.let { "$title\n$it" }
+        }.joinToString("\n\n")
     }
 
     private fun isProactiveControllerEnabled(settings: AgentSettings = activeAgentSettings): Boolean {

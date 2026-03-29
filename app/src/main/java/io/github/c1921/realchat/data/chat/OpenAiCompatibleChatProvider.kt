@@ -68,11 +68,20 @@ class OpenAiCompatibleChatProvider(
     override suspend fun send(
         messages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<ChatMessage> {
+    ): Result<ChatProviderResult> {
         val normalizedConfig = config.normalized()
         val requestUrl = buildChatCompletionsUrl(normalizedConfig.baseUrl)
         val httpUrl = requestUrl.toHttpUrlOrNull()
-            ?: return Result.failure(IllegalArgumentException("Base URL 无效。"))
+            ?: return Result.failure(
+                ChatRequestException(
+                    message = "Base URL 无效。",
+                    trace = ChatRequestTrace(
+                        requestMessages = messages,
+                        requestUrl = requestUrl,
+                        model = normalizedConfig.model
+                    )
+                )
+            )
 
         val requestBody = OpenAiCompatibleChatRequest(
             model = normalizedConfig.model,
@@ -85,6 +94,7 @@ class OpenAiCompatibleChatProvider(
         )
 
         return withContext(Dispatchers.IO) {
+            var rawResponseBody = ""
             runCatching {
                 val request = Request.Builder()
                     .url(httpUrl)
@@ -97,18 +107,24 @@ class OpenAiCompatibleChatProvider(
                     .build()
 
                 client.newCall(request).execute().use { response ->
-                    val responseText = response.body?.string().orEmpty()
+                    rawResponseBody = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
-                        throw IOException(
-                            extractProviderErrorMessage(
+                        throw ChatRequestException(
+                            message = extractProviderErrorMessage(
                                 statusCode = response.code,
-                                responseBody = responseText
+                                responseBody = rawResponseBody
+                            ),
+                            trace = ChatRequestTrace(
+                                requestMessages = messages,
+                                requestUrl = requestUrl,
+                                model = normalizedConfig.model,
+                                rawResponseBody = rawResponseBody
                             )
                         )
                     }
 
                     val responseBodyModel =
-                        json.decodeFromString<OpenAiCompatibleChatResponse>(responseText)
+                        json.decodeFromString<OpenAiCompatibleChatResponse>(rawResponseBody)
                     val content = responseBodyModel.choices
                         .firstOrNull()
                         ?.message
@@ -117,18 +133,48 @@ class OpenAiCompatibleChatProvider(
                         .orEmpty()
 
                     if (content.isEmpty()) {
-                        throw IOException("服务端未返回有效回复。")
+                        throw ChatRequestException(
+                            message = "服务端未返回有效回复。",
+                            trace = ChatRequestTrace(
+                                requestMessages = messages,
+                                requestUrl = requestUrl,
+                                model = normalizedConfig.model,
+                                rawResponseBody = rawResponseBody
+                            )
+                        )
                     }
 
-                    ChatMessage(
-                        role = ChatRole.Assistant,
-                        content = content
+                    ChatProviderResult(
+                        message = ChatMessage(
+                            role = ChatRole.Assistant,
+                            content = content
+                        ),
+                        trace = ChatRequestTrace(
+                            requestMessages = messages,
+                            requestUrl = requestUrl,
+                            model = normalizedConfig.model,
+                            rawResponseBody = rawResponseBody,
+                            responseContent = content
+                        )
                     )
                 }
             }.fold(
                 onSuccess = { Result.success(it) },
                 onFailure = {
-                    Result.failure(IOException(it.message ?: "请求失败。", it))
+                    val exception = when (it) {
+                        is ChatRequestException -> it
+                        else -> ChatRequestException(
+                            message = it.message ?: "请求失败。",
+                            cause = it,
+                            trace = ChatRequestTrace(
+                                requestMessages = messages,
+                                requestUrl = requestUrl,
+                                model = normalizedConfig.model,
+                                rawResponseBody = rawResponseBody
+                            )
+                        )
+                    }
+                    Result.failure(exception)
                 }
             )
         }

@@ -6,6 +6,9 @@ import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationDebugEvent
+import io.github.c1921.realchat.model.ConversationDebugSource
+import io.github.c1921.realchat.model.ConversationDebugType
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.EmotionState
@@ -52,6 +55,16 @@ interface ConversationRepository {
         summaryText: String,
         keepRecentMessages: List<ChatMessage>
     )
+
+    suspend fun appendDebugEvent(
+        conversationId: Long,
+        source: ConversationDebugSource,
+        type: ConversationDebugType,
+        title: String,
+        summary: String,
+        details: String,
+        createdAt: Long
+    ): Long
 }
 
 class RoomConversationRepository(
@@ -63,6 +76,7 @@ class RoomConversationRepository(
 ) : ConversationRepository {
     private val conversationDao = database.conversationDao()
     private val messageDao = database.conversationMessageDao()
+    private val debugEventDao = database.conversationDebugEventDao()
 
     override fun observeConversations(): Flow<List<Conversation>> {
         return conversationDao.observeAll().map { conversations ->
@@ -90,12 +104,14 @@ class RoomConversationRepository(
     override fun observeConversationWithMessages(conversationId: Long): Flow<ConversationWithMessages?> {
         return combine(
             conversationDao.observeById(conversationId),
-            messageDao.observeByConversationId(conversationId)
-        ) { conversation, messages ->
+            messageDao.observeByConversationId(conversationId),
+            debugEventDao.observeByConversationId(conversationId)
+        ) { conversation, messages, debugEvents ->
             conversation?.toDomain()?.let { domainConversation ->
                 ConversationWithMessages(
                     conversation = domainConversation,
-                    messages = messages.map { entity -> entity.toDomain() }
+                    messages = messages.map { entity -> entity.toDomain() },
+                    debugEvents = debugEvents.map { entity -> entity.toDomain() }
                 )
             }
         }
@@ -153,6 +169,7 @@ class RoomConversationRepository(
     ) {
         val existing = conversationDao.getById(conversationId) ?: return
         val now = System.currentTimeMillis()
+        val assistantTimestamp = now + 1L
         database.withTransaction {
             messageDao.insert(
                 ConversationMessageEntity(
@@ -167,13 +184,13 @@ class RoomConversationRepository(
                     conversationId = conversationId,
                     role = assistantMessage.role.wireName,
                     content = assistantMessage.content,
-                    createdAt = now
+                    createdAt = assistantTimestamp
                 )
             )
             conversationDao.update(
                 existing.copy(
                     draft = "",
-                    updatedAt = now
+                    updatedAt = assistantTimestamp
                 )
             )
         }
@@ -208,6 +225,28 @@ class RoomConversationRepository(
             )
             conversationDao.update(existing.copy(updatedAt = now))
         }
+    }
+
+    override suspend fun appendDebugEvent(
+        conversationId: Long,
+        source: ConversationDebugSource,
+        type: ConversationDebugType,
+        title: String,
+        summary: String,
+        details: String,
+        createdAt: Long
+    ): Long {
+        return debugEventDao.insert(
+            ConversationDebugEventEntity(
+                conversationId = conversationId,
+                source = source.wireName,
+                type = type.wireName,
+                title = title,
+                summary = summary,
+                details = details,
+                createdAt = createdAt
+            )
+        )
     }
 
     override suspend fun updateEmotionState(conversationId: Long, state: EmotionState) {
@@ -275,7 +314,22 @@ class RoomConversationRepository(
     private fun ConversationMessageEntity.toDomain(): ChatMessage {
         return ChatMessage(
             role = ChatRole.entries.firstOrNull { it.wireName == role } ?: ChatRole.Assistant,
-            content = content
+            content = content,
+            createdAt = createdAt
+        )
+    }
+
+    private fun ConversationDebugEventEntity.toDomain(): ConversationDebugEvent {
+        return ConversationDebugEvent(
+            id = id,
+            conversationId = conversationId,
+            source = ConversationDebugSource.fromWireName(source) ?: ConversationDebugSource.System,
+            type = ConversationDebugType.fromWireName(type)
+                ?: ConversationDebugType.SendStarted,
+            title = title,
+            summary = summary,
+            details = details,
+            createdAt = createdAt
         )
     }
 }

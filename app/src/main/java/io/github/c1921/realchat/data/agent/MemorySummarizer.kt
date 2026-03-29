@@ -1,17 +1,19 @@
 package io.github.c1921.realchat.data.agent
 
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.model.AgentExecutionTrace
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.ProviderConfig
+import io.github.c1921.realchat.model.TracedValue
 
 interface MemorySummarizer {
     suspend fun summarize(
         messagesToSummarize: List<ChatMessage>,
         snapshot: CharacterCardSnapshot?,
         config: ProviderConfig
-    ): Result<String>
+    ): Result<TracedValue<String>>
 }
 
 class OpenAiCompatibleMemorySummarizer(
@@ -22,7 +24,7 @@ class OpenAiCompatibleMemorySummarizer(
         messagesToSummarize: List<ChatMessage>,
         snapshot: CharacterCardSnapshot?,
         config: ProviderConfig
-    ): Result<String> {
+    ): Result<TracedValue<String>> {
         val characterName = snapshot?.effectiveName().orEmpty()
         val historyText = messagesToSummarize.joinToString("\n") { msg ->
             val roleLabel = when (msg.role) {
@@ -39,7 +41,18 @@ class OpenAiCompatibleMemorySummarizer(
             ChatMessage(role = ChatRole.User, content = historyText)
         )
 
-        return chatProvider.send(messages, config).map { response -> response.content.trim() }
+        return chatProvider.send(messages, config).map { response ->
+            val summary = response.message.content.trim()
+            TracedValue(
+                value = summary,
+                trace = AgentExecutionTrace(
+                    systemPrompt = systemPrompt,
+                    requestMessages = messages,
+                    rawOutput = response.message.content,
+                    parsedSummary = summary
+                )
+            )
+        }
     }
 
     companion object {

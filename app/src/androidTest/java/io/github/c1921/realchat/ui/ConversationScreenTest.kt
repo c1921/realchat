@@ -7,6 +7,9 @@ import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationDebugEvent
+import io.github.c1921.realchat.model.ConversationDebugSource
+import io.github.c1921.realchat.model.ConversationDebugType
 import io.github.c1921.realchat.model.ConversationListItem
 import org.junit.Rule
 import org.junit.Test
@@ -42,14 +45,25 @@ class ConversationScreenTest {
     }
 
     @Test
-    fun chatDetailScreen_showsDirectorGuidanceHintInDeveloperMode() {
-        val hint = "导演指示：氛围：温暖，推进：保持亲近"
+    fun chatDetailScreen_showsDebugEventInDeveloperMode() {
+        val summary = "导演分析完成"
 
         composeRule.setContent {
             MaterialTheme {
                 ChatDetailScreen(
                     conversation = sampleConversationState(
-                        directorGuidanceHints = mapOf(0 to hint)
+                        debugEvents = listOf(
+                            ConversationDebugEvent(
+                                id = 1L,
+                                conversationId = 1L,
+                                source = ConversationDebugSource.Director,
+                                type = ConversationDebugType.DirectorAnalysisSucceeded,
+                                title = "导演分析完成",
+                                summary = summary,
+                                details = "原始输出\n{\"mood\":\"温暖\"}",
+                                createdAt = 3L
+                            )
+                        )
                     ),
                     settings = SettingsUiState(developerModeEnabled = true),
                     onGetProactiveNextTriggerMs = { 0L },
@@ -61,18 +75,30 @@ class ConversationScreenTest {
             }
         }
 
-        composeRule.onNodeWithText(hint).assertExists()
+        composeRule.onNodeWithText(summary).assertExists()
+        composeRule.onNodeWithTag("debug_event_card").assertExists()
     }
 
     @Test
-    fun chatDetailScreen_hidesDirectorGuidanceHintWhenDeveloperModeDisabled() {
-        val hint = "导演指示：氛围：温暖，推进：保持亲近"
+    fun chatDetailScreen_hidesDebugEventWhenDeveloperModeDisabled() {
+        val summary = "导演分析完成"
 
         composeRule.setContent {
             MaterialTheme {
                 ChatDetailScreen(
                     conversation = sampleConversationState(
-                        directorGuidanceHints = mapOf(0 to hint)
+                        debugEvents = listOf(
+                            ConversationDebugEvent(
+                                id = 1L,
+                                conversationId = 1L,
+                                source = ConversationDebugSource.Director,
+                                type = ConversationDebugType.DirectorAnalysisSucceeded,
+                                title = "导演分析完成",
+                                summary = summary,
+                                details = "原始输出\n{\"mood\":\"温暖\"}",
+                                createdAt = 3L
+                            )
+                        )
                     ),
                     settings = SettingsUiState(),
                     onGetProactiveNextTriggerMs = { 0L },
@@ -84,18 +110,29 @@ class ConversationScreenTest {
             }
         }
 
-        composeRule.onNodeWithText(hint).assertDoesNotExist()
+        composeRule.onNodeWithText(summary).assertDoesNotExist()
     }
 
     @Test
-    fun chatDetailScreen_ignoresMismatchedDirectorGuidanceIndex() {
-        val hint = "导演指示：不会显示"
+    fun chatDetailScreen_expandsDebugEventDetails() {
+        val summary = "导演分析完成"
 
         composeRule.setContent {
             MaterialTheme {
                 ChatDetailScreen(
                     conversation = sampleConversationState(
-                        directorGuidanceHints = mapOf(1 to hint)
+                        debugEvents = listOf(
+                            ConversationDebugEvent(
+                                id = 1L,
+                                conversationId = 1L,
+                                source = ConversationDebugSource.Director,
+                                type = ConversationDebugType.DirectorAnalysisSucceeded,
+                                title = "导演分析完成",
+                                summary = summary,
+                                details = "原始输出\n{\"mood\":\"温暖\"}",
+                                createdAt = 3L
+                            )
+                        )
                     ),
                     settings = SettingsUiState(developerModeEnabled = true),
                     onGetProactiveNextTriggerMs = { 0L },
@@ -107,7 +144,10 @@ class ConversationScreenTest {
             }
         }
 
-        composeRule.onNodeWithText(hint).assertDoesNotExist()
+        composeRule.onNodeWithTag("debug_event_details").assertDoesNotExist()
+        composeRule.onNodeWithText("展开详情").performClick()
+        composeRule.onNodeWithTag("debug_event_details").assertExists()
+        composeRule.onNodeWithText("原始输出").assertExists()
     }
 
     @Test
@@ -137,7 +177,7 @@ class ConversationScreenTest {
 
     private fun sampleConversationState(
         draft: String = "",
-        directorGuidanceHints: Map<Int, String> = emptyMap()
+        debugEvents: List<ConversationDebugEvent> = emptyList()
     ): ConversationUiState {
         val conversation = Conversation(
             id = 1L,
@@ -156,7 +196,7 @@ class ConversationScreenTest {
                 ChatMessage(ChatRole.User, "在吗"),
                 ChatMessage(ChatRole.System, "系统通知")
             ),
-            directorGuidanceHints = directorGuidanceHints,
+            debugEvents = debugEvents,
             draft = draft,
             hasValidConfig = true
         )

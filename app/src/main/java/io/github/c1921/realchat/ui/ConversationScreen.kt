@@ -56,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
@@ -69,7 +70,11 @@ import androidx.compose.ui.unit.dp
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
+import io.github.c1921.realchat.model.ConversationDebugSource
 import io.github.c1921.realchat.model.ConversationListItem
+import io.github.c1921.realchat.model.ConversationTimelineItem
+import io.github.c1921.realchat.model.DebugEventTimelineItem
+import io.github.c1921.realchat.model.MessageTimelineItem
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -83,6 +88,8 @@ private const val CHAT_COMPOSER_SEND_TAG = "chat_composer_send"
 private const val USER_BUBBLE_TAG = "message_bubble_user"
 private const val ASSISTANT_BUBBLE_TAG = "message_bubble_assistant"
 private const val SYSTEM_BANNER_TAG = "message_banner_system"
+private const val DEBUG_EVENT_CARD_TAG = "debug_event_card"
+private const val DEBUG_EVENT_DETAILS_TAG = "debug_event_details"
 
 private val SameDayTimeFormatter: DateTimeFormatter =
     DateTimeFormatter.ofPattern("HH:mm", Locale.CHINA)
@@ -170,13 +177,26 @@ fun ChatDetailScreen(
 ) {
     val messageListState = rememberLazyListState()
     val selectedConversation = conversation.selectedConversation()
+    val timelineItems = remember(
+        conversation.messages,
+        conversation.debugEvents,
+        conversation.optimisticUserMessage,
+        settings.developerModeEnabled
+    ) {
+        buildTimelineItems(
+            messages = conversation.messages,
+            debugEvents = conversation.debugEvents,
+            optimisticUserMessage = conversation.optimisticUserMessage,
+            developerModeEnabled = settings.developerModeEnabled
+        )
+    }
     val roleName = selectedConversation?.characterSnapshot?.effectiveName()
         .orEmpty()
         .ifBlank { "未绑定角色" }
 
-    LaunchedEffect(selectedConversation?.id, conversation.messages.size) {
-        if (conversation.messages.isNotEmpty()) {
-            messageListState.animateScrollToItem(conversation.messages.lastIndex)
+    LaunchedEffect(selectedConversation?.id, timelineItems.size) {
+        if (timelineItems.isNotEmpty()) {
+            messageListState.animateScrollToItem(timelineItems.lastIndex)
         }
     }
 
@@ -255,7 +275,7 @@ fun ChatDetailScreen(
                     )
                 }
 
-                conversation.messages.isEmpty() -> {
+                timelineItems.isEmpty() -> {
                     EmptyPanel(
                         text = "当前会话还没有消息。",
                         modifier = Modifier
@@ -266,10 +286,8 @@ fun ChatDetailScreen(
 
                 else -> {
                     MessageList(
-                        messages = conversation.messages + listOfNotNull(conversation.optimisticUserMessage),
+                        timelineItems = timelineItems,
                         state = messageListState,
-                        developerModeEnabled = settings.developerModeEnabled,
-                        directorGuidanceHints = conversation.directorGuidanceHints,
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -416,10 +434,8 @@ private fun ChatHeaderTitle(
 
 @Composable
 private fun MessageList(
-    messages: List<ChatMessage>,
+    timelineItems: List<ConversationTimelineItem>,
     state: LazyListState,
-    developerModeEnabled: Boolean = false,
-    directorGuidanceHints: Map<Int, String> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -431,28 +447,117 @@ private fun MessageList(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        itemsIndexed(messages) { index, message ->
-            when (message.role) {
-                ChatRole.System -> SystemMessageBanner(message = message)
-                ChatRole.User, ChatRole.Assistant -> {
-                    val previousRole = messages.getOrNull(index - 1)?.role
-                    val nextRole = messages.getOrNull(index + 1)?.role
-                    val guidanceText = if (developerModeEnabled && message.role == ChatRole.Assistant) {
-                        directorGuidanceHints[index]
-                    } else null
-                    Column {
-                        if (guidanceText != null) {
-                            Text(
-                                text = guidanceText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary,
-                                modifier = Modifier.padding(start = 4.dp, bottom = 2.dp)
+        itemsIndexed(
+            items = timelineItems,
+            key = { _, item -> item.stableKey }
+        ) { index, item ->
+            when (item) {
+                is DebugEventTimelineItem -> {
+                    DebugEventCard(eventItem = item)
+                }
+
+                is MessageTimelineItem -> {
+                    when (item.message.role) {
+                        ChatRole.System -> SystemMessageBanner(message = item.message)
+                        ChatRole.User, ChatRole.Assistant -> {
+                            val previousRole = (timelineItems.getOrNull(index - 1) as? MessageTimelineItem)
+                                ?.message
+                                ?.role
+                            val nextRole = (timelineItems.getOrNull(index + 1) as? MessageTimelineItem)
+                                ?.message
+                                ?.role
+                            MessageBubble(
+                                message = item.message,
+                                isGroupedWithPrevious = previousRole == item.message.role,
+                                isGroupedWithNext = nextRole == item.message.role
                             )
                         }
-                        MessageBubble(
-                            message = message,
-                            isGroupedWithPrevious = previousRole == message.role,
-                            isGroupedWithNext = nextRole == message.role
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DebugEventCard(eventItem: DebugEventTimelineItem) {
+    var expanded by rememberSaveable(eventItem.event.id) { mutableStateOf(false) }
+    val sourceColor = when (eventItem.event.source) {
+        ConversationDebugSource.System -> MaterialTheme.colorScheme.secondaryContainer
+        ConversationDebugSource.Agent -> MaterialTheme.colorScheme.tertiaryContainer
+        ConversationDebugSource.Director -> MaterialTheme.colorScheme.primaryContainer
+    }
+    val onSourceColor = when (eventItem.event.source) {
+        ConversationDebugSource.System -> MaterialTheme.colorScheme.onSecondaryContainer
+        ConversationDebugSource.Agent -> MaterialTheme.colorScheme.onTertiaryContainer
+        ConversationDebugSource.Director -> MaterialTheme.colorScheme.onPrimaryContainer
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(DEBUG_EVENT_CARD_TAG),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = sourceColor
+                ) {
+                    Text(
+                        text = eventItem.event.source.label,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = onSourceColor
+                    )
+                }
+                Text(
+                    text = eventItem.event.title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            if (eventItem.event.summary.isNotBlank()) {
+                Text(
+                    text = eventItem.event.summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (eventItem.event.details.isNotBlank()) {
+                TextButton(
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(if (expanded) "收起详情" else "展开详情")
+                }
+                if (expanded) {
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(DEBUG_EVENT_DETAILS_TAG),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Text(
+                            text = eventItem.event.details,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
@@ -838,6 +943,35 @@ private fun bubbleShape(
 
 private fun avatarLabel(text: String): String {
     return text.trim().takeIf(String::isNotEmpty)?.first()?.toString() ?: "聊"
+}
+
+private fun buildTimelineItems(
+    messages: List<ChatMessage>,
+    debugEvents: List<io.github.c1921.realchat.model.ConversationDebugEvent>,
+    optimisticUserMessage: ChatMessage?,
+    developerModeEnabled: Boolean
+): List<ConversationTimelineItem> {
+    val indexedItems = buildList {
+        addAll(messages.mapIndexed { index, message -> index to MessageTimelineItem(message) })
+        optimisticUserMessage?.let { add(messages.size to MessageTimelineItem(message = it, optimistic = true)) }
+        if (developerModeEnabled) {
+            val baseIndex = messages.size + if (optimisticUserMessage != null) 1 else 0
+            addAll(debugEvents.mapIndexed { offset, event ->
+                (baseIndex + offset) to DebugEventTimelineItem(event)
+            })
+        }
+    }
+    return indexedItems.sortedWith(
+        compareBy<Pair<Int, ConversationTimelineItem>> { it.second.createdAt }
+            .thenBy { (_, item) ->
+                when (item) {
+                    is DebugEventTimelineItem -> 0
+                    is MessageTimelineItem -> if (item.message.role == ChatRole.System) 1 else 2
+                }
+            }
+            .thenBy { (index, _) -> index }
+            .thenBy { (_, item) -> item.stableKey }
+    ).map { it.second }
 }
 
 private fun ConversationListItem.summaryText(): String {

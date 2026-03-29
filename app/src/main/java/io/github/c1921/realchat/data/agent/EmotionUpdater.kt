@@ -1,11 +1,14 @@
 package io.github.c1921.realchat.data.agent
 
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.model.AgentExecutionException
+import io.github.c1921.realchat.model.AgentExecutionTrace
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.EmotionState
 import io.github.c1921.realchat.model.ProviderConfig
+import io.github.c1921.realchat.model.TracedValue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
@@ -17,7 +20,7 @@ interface EmotionUpdater {
         snapshot: CharacterCardSnapshot?,
         recentMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<EmotionState>
+    ): Result<TracedValue<EmotionState>>
 }
 
 class OpenAiCompatibleEmotionUpdater(
@@ -31,7 +34,7 @@ class OpenAiCompatibleEmotionUpdater(
         snapshot: CharacterCardSnapshot?,
         recentMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<EmotionState> {
+    ): Result<TracedValue<EmotionState>> {
         val characterName = snapshot?.effectiveName().orEmpty()
         val prompt = SYSTEM_PROMPT
             .replace("{{char}}", characterName)
@@ -52,9 +55,39 @@ class OpenAiCompatibleEmotionUpdater(
             ChatMessage(role = ChatRole.User, content = historyText)
         )
 
-        return chatProvider.send(messages, config).mapCatching { response ->
-            parseEmotionState(response.content, currentState)
-        }
+        return chatProvider.send(messages, config).fold(
+            onSuccess = { response ->
+                val rawOutput = response.message.content
+                runCatching {
+                    val state = parseEmotionState(rawOutput, currentState)
+                    TracedValue(
+                        value = state,
+                        trace = AgentExecutionTrace(
+                            systemPrompt = prompt,
+                            requestMessages = messages,
+                            rawOutput = rawOutput,
+                            parsedSummary = "好感度 ${state.affection}，心情 ${state.mood}"
+                        )
+                    )
+                }.fold(
+                    onSuccess = { Result.success(it) },
+                    onFailure = {
+                        Result.failure(
+                            AgentExecutionException(
+                                message = it.message ?: "情绪输出解析失败。",
+                                cause = it,
+                                trace = AgentExecutionTrace(
+                                    systemPrompt = prompt,
+                                    requestMessages = messages,
+                                    rawOutput = rawOutput
+                                )
+                            )
+                        )
+                    }
+                )
+            },
+            onFailure = { Result.failure(it) }
+        )
     }
 
     private fun parseEmotionState(rawText: String, fallback: EmotionState): EmotionState {

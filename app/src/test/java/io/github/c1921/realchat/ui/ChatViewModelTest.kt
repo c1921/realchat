@@ -6,16 +6,21 @@ import io.github.c1921.realchat.data.agent.MemorySummarizer
 import io.github.c1921.realchat.data.character.CharacterCardExportPayload
 import io.github.c1921.realchat.data.character.CharacterCardRepository
 import io.github.c1921.realchat.data.chat.ChatProvider
+import io.github.c1921.realchat.data.chat.ChatProviderResult
 import io.github.c1921.realchat.data.chat.ConversationRepository
 import io.github.c1921.realchat.data.chat.PromptComposer
 import io.github.c1921.realchat.data.settings.AppPreferences
 import io.github.c1921.realchat.data.settings.AppPreferencesRepository
 import io.github.c1921.realchat.model.AgentSettings
+import io.github.c1921.realchat.model.AgentExecutionTrace
 import io.github.c1921.realchat.model.CharacterCardSnapshot
 import io.github.c1921.realchat.model.ChatMessage
 import io.github.c1921.realchat.model.ChatRole
 import io.github.c1921.realchat.model.CharacterCard
 import io.github.c1921.realchat.model.Conversation
+import io.github.c1921.realchat.model.ConversationDebugEvent
+import io.github.c1921.realchat.model.ConversationDebugSource
+import io.github.c1921.realchat.model.ConversationDebugType
 import io.github.c1921.realchat.model.ConversationListItem
 import io.github.c1921.realchat.model.ConversationWithMessages
 import io.github.c1921.realchat.model.DirectorGuidance
@@ -27,6 +32,7 @@ import io.github.c1921.realchat.model.ProactiveDirectorDecision
 import io.github.c1921.realchat.model.ProactiveSettings
 import io.github.c1921.realchat.model.ProviderConfig
 import io.github.c1921.realchat.model.ProviderType
+import io.github.c1921.realchat.model.TracedValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -393,13 +399,14 @@ class ChatViewModelTest {
             }
         }
         val directorService = FakeDirectorService(
-            Result.success(
+            tracedGuidance(
                 DirectorGuidance(
                     mood = "温暖",
                     topicDirection = "聊案件",
                     avoid = "争吵",
                     pursue = "建立信任"
-                )
+                ),
+                parsedSummary = "氛围：温暖，话题方向：聊案件，推进：建立信任，避免：争吵"
             )
         )
         val viewModel = ChatViewModel(
@@ -420,9 +427,12 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, directorService.callCount)
-        assertEquals(
-            mapOf(2 to "导演指示：氛围：温暖，话题方向：聊案件，推进：建立信任，避免：争吵"),
-            viewModel.uiState.value.conversation.directorGuidanceHints
+        assertTrue(
+            viewModel.uiState.value.conversation.debugEvents.any { event ->
+                event.type == ConversationDebugType.DirectorAnalysisSucceeded &&
+                    event.summary.contains("氛围：温暖") &&
+                    event.summary.contains("推进：建立信任")
+            }
         )
     }
 
@@ -497,7 +507,10 @@ class ChatViewModelTest {
             }
         }
         val directorService = FakeDirectorService(
-            Result.success(DirectorGuidance(rawJson = "  {\"topic\":\"keep going\"}  "))
+            tracedGuidance(
+                DirectorGuidance(rawJson = "  {\"topic\":\"keep going\"}  "),
+                rawOutput = "{\"topic\":\"keep going\"}"
+            )
         )
         val viewModel = ChatViewModel(
             appPreferencesRepository = preferencesRepository,
@@ -517,9 +530,11 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, directorService.callCount)
-        assertEquals(
-            mapOf(2 to "导演原始输出：{\"topic\":\"keep going\"}"),
-            viewModel.uiState.value.conversation.directorGuidanceHints
+        assertTrue(
+            viewModel.uiState.value.conversation.debugEvents.any { event ->
+                event.type == ConversationDebugType.DirectorAnalysisSucceeded &&
+                    event.details.contains("{\"topic\":\"keep going\"}")
+            }
         )
     }
 
@@ -549,7 +564,7 @@ class ChatViewModelTest {
                 )
             }
         }
-        val directorService = FakeDirectorService(Result.success(DirectorGuidance()))
+        val directorService = FakeDirectorService(tracedGuidance(DirectorGuidance()))
         val viewModel = ChatViewModel(
             appPreferencesRepository = preferencesRepository,
             characterCardRepository = FakeCharacterCardRepository(listOf(card)),
@@ -568,7 +583,11 @@ class ChatViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, directorService.callCount)
-        assertTrue(viewModel.uiState.value.conversation.directorGuidanceHints.isEmpty())
+        assertTrue(
+            viewModel.uiState.value.conversation.debugEvents.any { event ->
+                event.type == ConversationDebugType.DirectorAnalysisSucceeded
+            }
+        )
     }
 
     @Test
@@ -604,14 +623,15 @@ class ChatViewModelTest {
             }
         }
         val directorService = FakeDirectorService(
-            proactiveResult = Result.success(
+            proactiveResult = tracedProactiveDecision(
                 ProactiveDirectorDecision(
                     action = ProactiveAction.START_NEW_TOPIC,
                     mood = "轻松",
                     topicDirection = "换个轻松话题",
                     pursue = "自然问候",
                     timeCue = "有一阵子没联系了"
-                )
+                ),
+                parsedSummary = "动作：start_new_topic，氛围：轻松，话题方向：换个轻松话题，推进：自然问候，时间表达：有一阵子没联系了"
             )
         )
         val chatProvider = FakeChatProvider()
@@ -670,8 +690,9 @@ class ChatViewModelTest {
             }
         }
         val directorService = FakeDirectorService(
-            proactiveResult = Result.success(
-                ProactiveDirectorDecision(action = ProactiveAction.WAIT_FOR_USER)
+            proactiveResult = tracedProactiveDecision(
+                ProactiveDirectorDecision(action = ProactiveAction.WAIT_FOR_USER),
+                parsedSummary = "动作：wait_for_user"
             )
         )
         val chatProvider = FakeChatProvider()
@@ -745,6 +766,43 @@ private class FakeAppPreferencesRepository(
     }
 }
 
+private fun tracedGuidance(
+    guidance: DirectorGuidance,
+    rawOutput: String = guidance.rawJson.trim(),
+    parsedSummary: String = buildList {
+        if (guidance.mood.isNotBlank()) add("氛围：${guidance.mood}")
+        if (guidance.topicDirection.isNotBlank()) add("话题方向：${guidance.topicDirection}")
+        if (guidance.pursue.isNotBlank()) add("推进：${guidance.pursue}")
+        if (guidance.avoid.isNotBlank()) add("避免：${guidance.avoid}")
+    }.joinToString("，")
+): Result<TracedValue<DirectorGuidance>> {
+    return Result.success(
+        TracedValue(
+            value = guidance,
+            trace = AgentExecutionTrace(
+                rawOutput = rawOutput,
+                parsedSummary = parsedSummary
+            )
+        )
+    )
+}
+
+private fun tracedProactiveDecision(
+    decision: ProactiveDirectorDecision,
+    rawOutput: String = decision.rawJson.trim(),
+    parsedSummary: String = ""
+): Result<TracedValue<ProactiveDirectorDecision>> {
+    return Result.success(
+        TracedValue(
+            value = decision,
+            trace = AgentExecutionTrace(
+                rawOutput = rawOutput,
+                parsedSummary = parsedSummary
+            )
+        )
+    )
+}
+
 private class FakeCharacterCardRepository(
     initialCards: List<CharacterCard>
 ) : CharacterCardRepository {
@@ -791,6 +849,7 @@ private class FakeConversationRepository(
     initialBundles: List<ConversationWithMessages>
 ) : ConversationRepository {
     private val bundles = MutableStateFlow(initialBundles)
+    private var nextDebugEventId = 1L
 
     override fun observeConversations(): Flow<List<Conversation>> {
         return bundles.map { current -> current.map(ConversationWithMessages::conversation) }
@@ -895,6 +954,39 @@ private class FakeConversationRepository(
         }
     }
 
+    override suspend fun appendDebugEvent(
+        conversationId: Long,
+        source: ConversationDebugSource,
+        type: ConversationDebugType,
+        title: String,
+        summary: String,
+        details: String,
+        createdAt: Long
+    ): Long {
+        val eventId = nextDebugEventId++
+        bundles.update { current ->
+            current.map { bundle ->
+                if (bundle.conversation.id == conversationId) {
+                    bundle.copy(
+                        debugEvents = bundle.debugEvents + ConversationDebugEvent(
+                            id = eventId,
+                            conversationId = conversationId,
+                            source = source,
+                            type = type,
+                            title = title,
+                            summary = summary,
+                            details = details,
+                            createdAt = createdAt
+                        )
+                    )
+                } else {
+                    bundle
+                }
+            }
+        }
+        return eventId
+    }
+
     override suspend fun updateEmotionState(conversationId: Long, state: EmotionState) {
         bundles.update { current ->
             current.map { bundle ->
@@ -935,16 +1027,21 @@ private class FakeChatProvider : ChatProvider {
     override suspend fun send(
         messages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<ChatMessage> {
+    ): Result<ChatProviderResult> {
         sendCallCount++
         lastMessages = messages
-        return Result.success(ChatMessage(ChatRole.Assistant, "ok"))
+        return Result.success(
+            ChatProviderResult(
+                message = ChatMessage(ChatRole.Assistant, "ok")
+            )
+        )
     }
 }
 
 private class FakeDirectorService(
-    private val result: Result<DirectorGuidance> = Result.failure(RuntimeException("director disabled")),
-    private val proactiveResult: Result<ProactiveDirectorDecision> =
+    private val result: Result<TracedValue<DirectorGuidance>> =
+        Result.failure(RuntimeException("director disabled")),
+    private val proactiveResult: Result<TracedValue<ProactiveDirectorDecision>> =
         Result.failure(RuntimeException("proactive director disabled"))
 ) : DirectorService {
     var callCount = 0
@@ -955,7 +1052,7 @@ private class FakeDirectorService(
         emotionState: EmotionState,
         conversationMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<DirectorGuidance> {
+    ): Result<TracedValue<DirectorGuidance>> {
         callCount++
         return result
     }
@@ -966,14 +1063,19 @@ private class FakeDirectorService(
         conversationMessages: List<ChatMessage>,
         elapsedMs: Long,
         config: ProviderConfig
-    ): Result<ProactiveDirectorDecision> {
+    ): Result<TracedValue<ProactiveDirectorDecision>> {
         proactiveCallCount++
         return proactiveResult
     }
 }
 
 private class FakeEmotionUpdater(
-    private val result: Result<EmotionState> = Result.success(EmotionState(affection = 60, mood = 1))
+    private val result: Result<TracedValue<EmotionState>> = Result.success(
+        TracedValue(
+            value = EmotionState(affection = 60, mood = 1),
+            trace = AgentExecutionTrace(parsedSummary = "好感度 60，心情 1")
+        )
+    )
 ) : EmotionUpdater {
     var callCount = 0
 
@@ -982,14 +1084,19 @@ private class FakeEmotionUpdater(
         snapshot: CharacterCardSnapshot?,
         recentMessages: List<ChatMessage>,
         config: ProviderConfig
-    ): Result<EmotionState> {
+    ): Result<TracedValue<EmotionState>> {
         callCount++
         return result
     }
 }
 
 private class FakeMemorySummarizer(
-    private val result: Result<String> = Result.success("摘要内容")
+    private val result: Result<TracedValue<String>> = Result.success(
+        TracedValue(
+            value = "摘要内容",
+            trace = AgentExecutionTrace(parsedSummary = "摘要内容")
+        )
+    )
 ) : MemorySummarizer {
     var callCount = 0
 
@@ -997,7 +1104,7 @@ private class FakeMemorySummarizer(
         messagesToSummarize: List<ChatMessage>,
         snapshot: CharacterCardSnapshot?,
         config: ProviderConfig
-    ): Result<String> {
+    ): Result<TracedValue<String>> {
         callCount++
         return result
     }
