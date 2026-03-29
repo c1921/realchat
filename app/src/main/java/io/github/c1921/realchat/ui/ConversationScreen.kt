@@ -482,84 +482,67 @@ private fun MessageList(
 @Composable
 private fun DebugEventCard(eventItem: DebugEventTimelineItem) {
     var expanded by rememberSaveable(eventItem.event.id) { mutableStateOf(false) }
-    val sourceColor = when (eventItem.event.source) {
-        ConversationDebugSource.System -> MaterialTheme.colorScheme.secondaryContainer
-        ConversationDebugSource.Agent -> MaterialTheme.colorScheme.tertiaryContainer
-        ConversationDebugSource.Director -> MaterialTheme.colorScheme.primaryContainer
-    }
-    val onSourceColor = when (eventItem.event.source) {
-        ConversationDebugSource.System -> MaterialTheme.colorScheme.onSecondaryContainer
-        ConversationDebugSource.Agent -> MaterialTheme.colorScheme.onTertiaryContainer
-        ConversationDebugSource.Director -> MaterialTheme.colorScheme.onPrimaryContainer
+    val labelColor = when (eventItem.event.source) {
+        ConversationDebugSource.System -> MaterialTheme.colorScheme.secondary
+        ConversationDebugSource.Agent -> MaterialTheme.colorScheme.tertiary
+        ConversationDebugSource.Director -> MaterialTheme.colorScheme.primary
     }
 
-    Surface(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag(DEBUG_EVENT_CARD_TAG),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f)
+            .testTag(DEBUG_EVENT_CARD_TAG)
+            .padding(horizontal = 32.dp, vertical = 2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Text(
+                text = "[${eventItem.event.source.label}]",
+                style = MaterialTheme.typography.labelSmall,
+                color = labelColor.copy(alpha = 0.7f)
+            )
+            Text(
+                text = eventItem.event.title,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (eventItem.event.summary.isNotBlank()) {
+            Text(
+                text = eventItem.event.summary,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (eventItem.event.details.isNotBlank()) {
+            Text(
+                text = if (expanded) "收起" else "详情",
+                modifier = Modifier.clickable { expanded = !expanded },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            )
+            if (expanded) {
                 Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = sourceColor
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(DEBUG_EVENT_DETAILS_TAG),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
                 ) {
                     Text(
-                        text = eventItem.event.source.label,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        text = eventItem.event.details,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                         style = MaterialTheme.typography.labelSmall,
-                        color = onSourceColor
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
-                }
-                Text(
-                    text = eventItem.event.title,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            if (eventItem.event.summary.isNotBlank()) {
-                Text(
-                    text = eventItem.event.summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            if (eventItem.event.details.isNotBlank()) {
-                TextButton(
-                    onClick = { expanded = !expanded },
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text(if (expanded) "收起详情" else "展开详情")
-                }
-                if (expanded) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag(DEBUG_EVENT_DETAILS_TAG),
-                        shape = RoundedCornerShape(14.dp),
-                        color = MaterialTheme.colorScheme.surface
-                    ) {
-                        Text(
-                            text = eventItem.event.details,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
                 }
             }
         }
@@ -965,8 +948,8 @@ private fun buildTimelineItems(
         compareBy<Pair<Int, ConversationTimelineItem>> { it.second.createdAt }
             .thenBy { (_, item) ->
                 when (item) {
-                    is DebugEventTimelineItem -> 0
-                    is MessageTimelineItem -> if (item.message.role == ChatRole.System) 1 else 2
+                    is MessageTimelineItem -> if (item.message.role == ChatRole.System) 0 else 1
+                    is DebugEventTimelineItem -> 2
                 }
             }
             .thenBy { (index, _) -> index }
